@@ -21,6 +21,7 @@ def _prune():
         elif value["join_expires"] <= now:
             value.pop("avatar_custom_image", None)
             value.pop("custom_voice_audio", None)
+            value.pop("challenge", None)
 
 
 def issue(
@@ -30,6 +31,8 @@ def issue(
     instructions=None,
     avatar_custom_image=None,
     custom_voice_audio=None,
+    challenge=None,
+    ttl_s=None,
 ):
     _prune()
     session_id = session_id or str(uuid4())
@@ -47,6 +50,10 @@ def issue(
         raise ValueError("Invalid avatar_custom_image")
     if custom_voice_audio is not None and not isinstance(custom_voice_audio, str):
         raise ValueError("Invalid custom_voice_audio")
+    if challenge is not None and not isinstance(challenge, dict):
+        raise ValueError("Invalid challenge")
+    if ttl_s is not None and (not isinstance(ttl_s, (int, float)) or not JOIN_TTL_SECONDS <= ttl_s <= SESSION_TTL_SECONDS):
+        raise ValueError("Invalid session ttl")
     token = token or secrets.token_urlsafe(32)
     join = secrets.token_urlsafe(32)
     now = time.monotonic()
@@ -54,10 +61,11 @@ def issue(
         "token": token,
         "join": join,
         "join_expires": now + JOIN_TTL_SECONDS,
-        "expires": now + SESSION_TTL_SECONDS,
+        "expires": now + (ttl_s or SESSION_TTL_SECONDS),
         "instructions": instructions,
         "avatar_custom_image": avatar_custom_image,
         "custom_voice_audio": custom_voice_audio,
+        "challenge": challenge,
     }
     return session_id, token, join
 
@@ -117,4 +125,10 @@ def take_custom_voice_audio(session_id):
     _prune()
     record = _sessions.get(session_id)
     return record.pop("custom_voice_audio", None) if record else None
+
+
+def take_challenge(session_id):
+    _prune()
+    record = _sessions.get(session_id)
+    return record.pop("challenge", None) if record else None
 

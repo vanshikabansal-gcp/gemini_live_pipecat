@@ -23,6 +23,11 @@ load_dotenv(override=True)
 import diagnostic_buffer
 import voice_profiles
 import session_access
+import abhay_challenge
+
+# Abhay negotiation challenge (APP_MODE=abhay-challenge). None in Voice Studio
+# mode, where nothing below that checks it changes behaviour.
+CHALLENGE: Optional[abhay_challenge.ChallengeSettings] = abhay_challenge.settings_from_env()
 
 
 def load_pipeline(bot_type):
@@ -56,10 +61,17 @@ def warm_media_pipelines():
     importlib.import_module("pipecat.audio.turn.smart_turn.local_smart_turn_v3")
 
 
-async def _warm_in_background():
+def warm_challenge_pipeline():
+    """The challenge only ever runs Gemini Live: skip the cascade and its turn model."""
+    from runtime_compat import _ensure_valid_adc
+    _ensure_valid_adc()
+    load_pipeline("gemini-live")
+
+
+async def _warm_in_background(warm=None):
     started = time.monotonic()
     try:
-        await asyncio.to_thread(warm_media_pipelines)
+        await asyncio.to_thread(warm or warm_media_pipelines)
         _safe_print(f"Media pipelines warmed in {time.monotonic() - started:.1f}s")
     except Exception as exc:  # Warmup is an optimization; a call will retry the import.
         _safe_print(f"Media pipeline warmup failed (will load on first call): {exc!r}")
@@ -70,6 +82,13 @@ from system_prompt import SYSTEM_PROMPT, tts_prompt
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles FastAPI startup and shutdown."""
+    if CHALLENGE is not None:
+        # Warm before serving. uvicorn opens the port only after startup, so
+        # Cloud Run keeps players off a fresh instance until its first round can
+        # start at once; a round that raced the warmup waited ~20s on imports.
+        await _warm_in_background(warm_challenge_pipeline)
+        yield
+        return
     warmup = asyncio.create_task(_warm_in_background())
     yield  # Run app
     if not warmup.done():
@@ -78,14 +97,25 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app with lifespan manager
 app = FastAPI(lifespan=lifespan)
 
-# Configure CORS to allow requests from any origin
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if CHALLENGE is None:
+    # Configure CORS to allow requests from any origin
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+# The challenge UI is served from this origin, so it registers no CORS policy:
+# browsers then refuse cross-origin reads of its API.
+
+
+@app.middleware("http")
+async def challenge_security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if CHALLENGE is not None:
+        abhay_challenge.apply_security_headers(response.headers, request.url.path)
+    return response
 
 @app.middleware("http")
 async def check_sni_mismatch_middleware(request: Request, call_next):
@@ -152,9 +182,16 @@ async def websocket_endpoint(
             await websocket.close(code=1008, reason="Invalid or expired connection")
             return
     else:
+        if CHALLENGE is not None:
+            await websocket.close(code=1008, reason="Start the challenge from the page")
+            return
         # Raw websocket clients get an isolated anonymous scope; a supplied ID
         # cannot impersonate a session created through /connect.
         session_id = str(uuid4())
+    if CHALLENGE is not None:
+        # Every query parameter is ignored: the round runs from server state.
+        await _run_challenge_socket(websocket, session_id)
+        return
     if bot_type not in diagnostic_buffer.BOT_TYPES:
         await websocket.close(code=1008, reason="Unknown bot_type")
         return
@@ -232,6 +269,135 @@ async def websocket_endpoint(
             pass
 
 
+async def _send_fatal_error(websocket: WebSocket, message: str, code: Optional[str] = None) -> None:
+    """Tell the client the session failed, over the same RTVI protobuf channel.
+    ``code`` lets the challenge page show a specific message."""
+    data: Dict[str, Any] = {"error": message, "fatal": True}
+    if code:
+        data["code"] = code
+    try:
+        from pipecat.frames.frames import OutputTransportMessageFrame
+        from pipecat.serializers.protobuf import ProtobufFrameSerializer
+        payload = await ProtobufFrameSerializer().serialize(
+            OutputTransportMessageFrame(message={"label": "rtvi-ai", "type": "error", "data": data})
+        )
+        if payload:
+            await websocket.send_bytes(payload if isinstance(payload, bytes) else payload.encode("utf-8"))
+    except Exception:
+        pass
+
+
+async def _close_quietly(websocket: WebSocket, code: int, reason: str = "") -> None:
+    """Close with a real close code instead of just dropping the connection.
+    The pipeline or the client may already have closed it."""
+    try:
+        await websocket.close(code=code, reason=reason)
+    except Exception:
+        pass
+
+
+async def _claim_challenge_id(websocket: WebSocket, player_id: str, session_id: str) -> bool:
+    """Reserve the ID for this round, or tell the page why it cannot play."""
+    try:
+        outcome = await asyncio.to_thread(
+            CHALLENGE.store.claim,
+            player_id,
+            session_id,
+            int(time.time() * 1000),
+            abhay_challenge.claim_ttl_ms(CHALLENGE.duration_s),
+        )
+    except Exception as e:
+        _safe_print(f"Challenge ID claim failed: {type(e).__name__}: {e}")
+        await _send_fatal_error(websocket, abhay_challenge.UNAVAILABLE_MESSAGE, code="unavailable")
+        await websocket.close(code=1011, reason="Try again in a minute")
+        return False
+    if outcome == abhay_challenge.CLAIM_OK:
+        return True
+    if outcome == abhay_challenge.ID_PLAYED:
+        await _send_fatal_error(websocket, abhay_challenge.ID_PLAYED_MESSAGE, code="already_played")
+    else:
+        await _send_fatal_error(websocket, abhay_challenge.ID_BUSY_MESSAGE, code="in_progress")
+    await websocket.close(code=1008, reason="This ID cannot start a round")
+    return False
+
+
+async def _run_challenge_socket(websocket: WebSocket, session_id: str) -> None:
+    """One timed Abhay round. Everything comes from what /connect staged."""
+    challenge = session_access.take_challenge(session_id)
+    instructions = session_access.take_instructions(session_id)
+    # Nothing else may ride along on a challenge session.
+    session_access.take_avatar_custom_image(session_id)
+    session_access.take_custom_voice_audio(session_id)
+    player_id = abhay_challenge.normalize_player_id((challenge or {}).get("player_id"))
+    language = (challenge or {}).get("language")
+    if not player_id or language not in abhay_challenge.LANGUAGES or not instructions:
+        await websocket.close(code=1008, reason="Start the challenge from the page")
+        return
+    if not CHALLENGE.try_acquire_slot():
+        await websocket.close(code=1013, reason="All showroom slots are busy")
+        return
+    try:
+        if not await _claim_challenge_id(websocket, player_id, session_id):
+            return
+        diagnostic_buffer.bind_session(session_id, "gemini-live")
+        config = abhay_challenge.ChallengeConfig(
+            session_id=session_id,
+            player_id=player_id,
+            language=language,
+            duration_s=CHALLENGE.duration_s,
+            store=CHALLENGE.store,
+            on_recorded=CHALLENGE.board.invalidate,
+        )
+        run_agent_live = await asyncio.to_thread(load_pipeline, "gemini-live")
+        # Backstop only: the round ends itself at duration_s. This bounds a
+        # stuck pipeline (and its Live API bill) if that ever fails.
+        await asyncio.wait_for(
+            run_agent_live(
+                websocket,
+                model=abhay_challenge.MODEL,
+                voice=abhay_challenge.VOICE,
+                language=language,
+                system_instruction=instructions,
+                tts=False,
+                tools=None,
+                vad=True,
+                vad_mode=abhay_challenge.VAD_MODE,
+                context_compression=True,
+                context_compression_trigger_tokens=5000,
+                thinking=False,
+                thinking_level=None,
+                custom_voice_key=None,
+                persona_id=abhay_challenge.PERSONA_ID,
+                avatar_enabled=False,
+                avatar_name="auto",
+                avatar_custom_image=None,
+                custom_voice_audio=None,
+                challenge=config,
+            ),
+            timeout=CHALLENGE.duration_s + 90,
+        )
+    except asyncio.TimeoutError:
+        _safe_print(f"Challenge round exceeded its wall-clock limit ({abhay_challenge.mask_player_id(player_id)})")
+        await _close_quietly(websocket, 1011, "The round ran too long")
+    except Exception as e:
+        diagnostic_buffer.append_raw_log_entry(f"Challenge session failed: {type(e).__name__}: {e}", "ERROR")
+        _safe_print(f"Exception in challenge round: {type(e).__name__}: {e}")
+        # Details stay in the server log; the player gets a generic message.
+        await _send_fatal_error(websocket, "The round could not continue. Please try again.")
+        await _close_quietly(websocket, 1011, "The round could not continue")
+    finally:
+        # A round that never produced a result (the claim was refused, or the
+        # call failed before the clock started) must not use up the ID.
+        # Finished rounds have already recorded their score or released the
+        # claim themselves. Releasing is always safe: it only ever removes
+        # this session's own claim, including one whose claim call was cut off.
+        if abhay_challenge.recent_result(session_id) is None:
+            try:
+                await asyncio.to_thread(CHALLENGE.store.release, player_id, session_id)
+            except Exception as e:
+                _safe_print(f"Challenge ID release failed: {type(e).__name__}: {e}")
+        CHALLENGE.release_slot()
+
 
 @app.get("/persona-prompt/{persona_id}")
 async def persona_prompt(
@@ -251,6 +417,9 @@ async def persona_prompt(
     card formatted prompt for live phase inspection (for live engine).
     In cascade engine, the monolithic prompt is always returned.
     """
+    if CHALLENGE is not None:
+        # Abhay's prompt states his hidden floor; the challenge never serves it.
+        raise HTTPException(status_code=404, detail="Not found")
     from persona_registry import (
         ArchitecturePattern,
         get_persona_architecture,
@@ -330,6 +499,8 @@ async def persona_prompt(
 
 @app.post("/connect")
 async def bot_connect(request: Request) -> Dict[Any, Any]:
+    if CHALLENGE is not None:
+        return await _challenge_connect(request)
     import json
     from urllib.parse import parse_qs, urlencode
     # Get the original query string from the incoming request (e.g., "model=...&voice=...")
@@ -464,11 +635,201 @@ async def bot_connect(request: Request) -> Dict[Any, Any]:
         raise HTTPException(status_code=500, detail="Unable to prepare session")
 
 
+# ---------------------------------------------------------------------------
+# Abhay negotiation challenge (APP_MODE=abhay-challenge only)
+# ---------------------------------------------------------------------------
+
+
+def _require_challenge() -> abhay_challenge.ChallengeSettings:
+    if CHALLENGE is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return CHALLENGE
+
+
+def _caller(request: Request) -> str:
+    return abhay_challenge.client_ip(request.headers, request.client.host if request.client else None)
+
+
+async def _read_small_json(request: Request, limit: int) -> Dict[str, Any]:
+    """Parse a small JSON object body.
+
+    Requiring application/json also means a cross-site page cannot post here
+    without a CORS preflight, which this origin never approves.
+    """
+    import json
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        raise HTTPException(status_code=415, detail="Send JSON")
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status_code=413, detail="Request too large")
+    raw = await request.body()
+    if len(raw) > limit:
+        raise HTTPException(status_code=413, detail="Request too large")
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid request")
+    return body
+
+
+async def _challenge_connect(request: Request) -> Dict[str, Any]:
+    """Start a round. Only the ID and a language are accepted from the client;
+    persona, model, voice, prompt and tools are fixed server-side."""
+    from urllib.parse import urlencode
+    settings = _require_challenge()
+    if not settings.connect_limiter.allow(_caller(request)):
+        raise HTTPException(status_code=429, detail="Too many attempts. Wait a minute and try again.")
+    body = await _read_small_json(request, 2048)
+    player_id = abhay_challenge.normalize_player_id(body.get("player_id"))
+    if player_id is None:
+        raise HTTPException(status_code=400, detail=abhay_challenge.INVALID_ID_MESSAGE)
+    language = body.get("language")
+    if language not in abhay_challenge.LANGUAGES:
+        language = abhay_challenge.DEFAULT_LANGUAGE
+    if settings.active_sessions() >= settings.max_concurrent:
+        raise HTTPException(status_code=503, detail="All showroom slots are busy. Try again in a minute.")
+    # One round per ID. This is an early, friendly check; the claim taken when
+    # the call opens is what enforces it.
+    try:
+        standing = await asyncio.to_thread(settings.store.status, player_id, int(time.time() * 1000))
+    except Exception as exc:
+        _safe_print(f"Challenge ID check failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail=abhay_challenge.UNAVAILABLE_MESSAGE)
+    if standing == abhay_challenge.ID_PLAYED:
+        raise HTTPException(status_code=409, detail=abhay_challenge.ID_PLAYED_MESSAGE)
+    if standing == abhay_challenge.ID_BUSY:
+        raise HTTPException(status_code=409, detail=abhay_challenge.ID_BUSY_MESSAGE)
+    from persona_prompt_cards import get_session_preset
+    try:
+        instructions = get_session_preset(
+            abhay_challenge.PERSONA_ID, engine="live", tone=settings.tone, language=language
+        )
+    except ValueError:
+        instructions = None
+    if not instructions:
+        raise HTTPException(status_code=500, detail="The challenge is unavailable right now.")
+    try:
+        session_id, session_token, connection_id = session_access.issue(
+            instructions=instructions,
+            challenge={"player_id": player_id, "language": language},
+            ttl_s=settings.duration_s + abhay_challenge.RECENT_RESULT_TTL_S,
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="The showroom is full. Try again in a minute.")
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    ws_scheme = "wss" if scheme == "https" else "ws"
+    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    # The player ID stays server-side: URLs end up in logs.
+    query = urlencode({"bot_type": "gemini-live", "session_id": session_id, "connection_id": connection_id})
+    return {
+        "ws_url": f"{ws_scheme}://{host}/ws?{query}",
+        "session_id": session_id,
+        "session_token": session_token,
+        "duration_s": settings.duration_s,
+        "player": abhay_challenge.mask_player_id(player_id),
+    }
+
+
+@app.get("/api/challenge/config")
+async def challenge_config(request: Request) -> Dict[str, Any]:
+    settings = _require_challenge()
+    if not settings.board_limiter.allow(_caller(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    return settings.public_config()
+
+
+@app.get("/api/challenge/leaderboard")
+async def challenge_leaderboard(
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=abhay_challenge.MAX_BOARD_LIMIT),
+) -> Dict[str, Any]:
+    """Public board, IDs masked. A valid organizer token also returns the full
+    IDs of the top ``reveal_top_n`` rows (the winners)."""
+    settings = _require_challenge()
+    if not settings.board_limiter.allow(_caller(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    admin_token = request.headers.get("x-admin-token")
+    revealed = False
+    if admin_token is not None:
+        if not settings.admin.verify_token(admin_token):
+            raise HTTPException(status_code=401, detail="Organizer session expired")
+        revealed = True
+    try:
+        board = await asyncio.to_thread(settings.board.get)
+    except Exception as exc:
+        _safe_print(f"Leaderboard unavailable: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail="Leaderboard temporarily unavailable")
+    entries = abhay_challenge.public_entries(
+        board["entries"][:limit], reveal_top_n=settings.reveal_top_n if revealed else 0
+    )
+    return {
+        "entries": entries,
+        "total_players": board["total_players"],
+        "revealed": revealed,
+        "reveal_top_n": settings.reveal_top_n,
+        "stale": bool(board.get("stale")),
+        "server_time_ms": int(time.time() * 1000),
+    }
+
+
+@app.post("/api/challenge/admin/login")
+async def challenge_admin_login(request: Request) -> Dict[str, Any]:
+    settings = _require_challenge()
+    if not settings.admin.enabled:
+        raise HTTPException(status_code=404, detail="Organizer access is not configured")
+    caller = _caller(request)
+    if not settings.login_limiter.allow(caller) or not settings.login_hourly_limiter.allow(caller):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    body = await _read_small_json(request, 1024)
+    if not settings.admin.check_password(body.get("password")):
+        # Never log what was typed.
+        _safe_print("Organizer login rejected")
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    token, expires_at = settings.admin.issue_token()
+    return {"token": token, "expires_at_ms": expires_at * 1000, "reveal_top_n": settings.reveal_top_n}
+
+
+@app.post("/api/challenge/finish")
+async def challenge_finish(request: Request) -> Dict[str, Any]:
+    """End the caller's own round now and return its score (or the score of a
+    round that already ended). Authorized by the session token from /connect."""
+    settings = _require_challenge()
+    if not settings.finish_limiter.allow(_caller(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    body = await _read_small_json(request, 1024)
+    session_id = body.get("session_id")
+    if not isinstance(session_id, str) or not session_id or len(session_id) > 128:
+        raise HTTPException(status_code=400, detail="Invalid request")
+    if not session_access.authorized(session_id, request.headers.get("x-session-token")):
+        raise HTTPException(status_code=403, detail="Session access denied")
+    run = abhay_challenge.ACTIVE_RUNS.get(session_id)
+    if run is not None and run.started:
+        result = await run.finish("ended_by_player")
+    else:
+        result = abhay_challenge.recent_result(session_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No result for this round yet")
+    return {"result": result}
+
+
 @app.get("/connect/system-prompt")
 async def get_system_prompt():
+    if CHALLENGE is not None:
+        raise HTTPException(status_code=404, detail="Not found")
     return {"system_prompt": SYSTEM_PROMPT}
 
+def studio_only():
+    """Voice Studio tooling that the challenge never exposes: session logs
+    include Abhay's tool results, which say when he has reached his floor."""
+    if CHALLENGE is not None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 def diagnostic_session(request: Request, session_id: str = Query(min_length=1, max_length=128)):
+    studio_only()
     if not session_access.authorized(session_id, request.headers.get("x-session-token")):
         raise HTTPException(status_code=403, detail="Session access denied")
     return session_id
@@ -507,12 +868,14 @@ async def get_current_trace_endpoint(session_id: str = Depends(diagnostic_sessio
 
 @app.get("/api/visits")
 async def get_studio_visits_endpoint():
+    studio_only()
     import visit_counter
     return visit_counter.get_visits()
 
 
 @app.post("/api/visits")
 async def record_studio_visit_endpoint(request: Request):
+    studio_only()
     import json
     import visit_counter
     page_load_id: Optional[str] = None
@@ -539,7 +902,43 @@ possible_dist_dirs = [
 
 client_dist_dir = next((d for d in possible_dist_dirs if os.path.exists(d)), None)
 
-if client_dist_dir:
+# Pages the challenge UI answers; every other unknown path is a 404.
+CHALLENGE_PAGES = ("", "board")
+
+
+def _mount_challenge_ui(dist_dir: Optional[str]) -> None:
+    """Serve only the challenge build (``dist/challenge``).
+
+    The studio bundle is deliberately not served here: it embeds every persona
+    prompt, including the one that states Abhay's floor price.
+    """
+    ui_dir = os.path.join(dist_dir, "challenge") if dist_dir else None
+    page = os.path.join(ui_dir, "challenge.html") if ui_dir else None
+    if not page or not os.path.exists(page):
+        _safe_print("Challenge UI build not found (expected dist/challenge/challenge.html); serving the API only.")
+        return
+    app.mount("/assets", StaticFiles(directory=os.path.join(ui_dir, "assets")), name="assets")
+    personas_dir = os.path.join(ui_dir, "personas")
+    if os.path.exists(personas_dir):
+        app.mount("/personas", StaticFiles(directory=personas_dir), name="personas")
+
+    @app.get("/favicon.svg")
+    async def read_challenge_favicon():
+        fav_path = os.path.join(ui_dir, "favicon.svg")
+        if os.path.exists(fav_path):
+            return FileResponse(fav_path)
+        return Response(status_code=404)
+
+    @app.get("/{page_path:path}")
+    async def read_challenge_page(page_path: str):
+        if page_path.strip("/") not in CHALLENGE_PAGES:
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse(page, headers={"Cache-Control": "no-store"})
+
+
+if CHALLENGE is not None:
+    _mount_challenge_ui(client_dist_dir)
+elif client_dist_dir:
     app.mount("/assets", StaticFiles(directory=os.path.join(client_dist_dir, "assets")), name="assets")
     
     personas_dir = os.path.join(client_dist_dir, "personas")

@@ -1456,6 +1456,34 @@ class UserIdleProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class ChallengeControlProcessor(FrameProcessor):
+    """Abhay challenge only: handles the player's "end round now" request.
+
+    It arrives over the call's own socket rather than HTTP, so it always
+    reaches the instance that is running the round. Scoring runs in its own
+    task: a leaderboard write must not stall microphone audio.
+    """
+
+    FINISH_MESSAGE = "challenge_finish"
+
+    def __init__(self):
+        super().__init__()
+        self.run = None  # abhay_challenge.ChallengeRun, set once the task exists.
+        self._finish_task: Optional[asyncio.Task] = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, InputTransportMessageFrame):
+            message = frame.message
+            if isinstance(message, dict) and message.get("type") == self.FINISH_MESSAGE:
+                if self.run is not None and self.run.started and self._finish_task is None:
+                    # Plain asyncio task: pipeline teardown must not cancel a
+                    # score that is being written.
+                    self._finish_task = asyncio.create_task(self.run.finish("ended_by_player"))
+                return
+        await self.push_frame(frame, direction)
+
+
 class StartTriggerProcessor(FrameProcessor):
     """Handles client start_trigger and gates microphone audio during initial greeting.
 
@@ -1965,6 +1993,9 @@ async def run_agent_live(
     avatar_name: str = "auto",
     avatar_custom_image: Optional[str] = None,
     custom_voice_audio: Optional[str] = None,
+    # abhay_challenge.ChallengeConfig for a timed, scored Abhay round. None for
+    # every Voice Studio session, which then runs exactly as before.
+    challenge: Optional[Any] = None,
 ):
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "deep-clock-339817"
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
@@ -2306,9 +2337,11 @@ async def run_agent_live(
     live_vad = build_live_vad_processor(vad, vad_mode)
     user_idle = UserIdleProcessor(callback=handle_user_idle, timeout=30.0)
     llm.user_idle_processor = user_idle
+    challenge_control = ChallengeControlProcessor() if challenge is not None else None
 
     pipeline = Pipeline([
         transport.input(),
+        *([challenge_control] if challenge_control is not None else []),
         start_trigger,
         *([live_vad] if live_vad else []),
         TurnBoundaryProcessor(turn_tracker),
@@ -2331,6 +2364,52 @@ async def run_agent_live(
     
     if os.getenv("ENABLE_WHISKER") == "1":
         task.add_observer(WhiskerObserver(pipeline))
+
+    challenge_run = None
+    if challenge is not None:
+        from abhay_challenge import ChallengeRun
+
+        # The handler-bearing architecture instance owns the live Deal.
+        deal_owner = persona_architecture
+
+        async def send_challenge_event(payload: dict):
+            # Urgent: the clock and the final result must not queue behind audio.
+            await llm.push_frame(OutputTransportMessageUrgentFrame(message={
+                "label": "rtvi-ai",
+                "type": "server-message",
+                "data": payload,
+            }))
+
+        def challenge_scoreboard() -> Dict[str, Any]:
+            deal = getattr(deal_owner, "deal", None)
+            return deal.scoreboard() if deal is not None else {}
+
+        def player_spoke() -> bool:
+            history = getattr(llm, "_dialogue_history", None) or []
+            return any(turn.get("role") == "User" for turn in history)
+
+        challenge_run = ChallengeRun(
+            challenge,
+            scoreboard=challenge_scoreboard,
+            spoke=player_spoke,
+            send=send_challenge_event,
+            end=task.cancel,
+        )
+        challenge_control.run = challenge_run
+
+        # Not on_client_connected: that fires from the input transport while
+        # the StartFrame is still travelling, so the LLM and output transport
+        # would drop the first challenge_state. This fires once all have started.
+        @task.event_handler("on_pipeline_started")
+        async def on_challenge_pipeline_started(task, frame):
+            await challenge_run.start()
+            # Opening price for the page; never the floor (see public_deal_state).
+            public_deal_state = getattr(deal_owner, "public_deal_state", None)
+            if public_deal_state is not None:
+                try:
+                    await send_challenge_event(public_deal_state())
+                except Exception as exc:
+                    logger.debug(f"[Challenge] Initial deal_state not delivered: {exc}")
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -2363,5 +2442,8 @@ async def run_agent_live(
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
+        if challenge_run is not None:
+            # Scores a round the player hung up on; a no-op if time already ran out.
+            await challenge_run.close()
         turn_tracker.close()
         GLOBAL_LANGSMITH_TRACER.end_session()

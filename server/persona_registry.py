@@ -218,6 +218,18 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
 
     pattern = ArchitecturePattern.STATE_LADDER_NEGOTIATOR
 
+    #: Deal fields a buyer may see. ``floor``, ``at_floor`` and the perk budget
+    #: would hand them Abhay's hidden limits, so they never leave the server.
+    PUBLIC_DEAL_FIELDS = (
+        "currency",
+        "cash_price",
+        "extras_value",
+        "extras",
+        "effective_price",
+        "sold",
+        "rejected_attempts",
+    )
+
     def __init__(self) -> None:
         self._deal = None
 
@@ -229,6 +241,13 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
 
             self._deal = negotiation.Deal(strict_ladder=True)
         return self._deal
+
+    def public_deal_state(self) -> Dict[str, Any]:
+        """``deal_state`` event for the client: the live price, never the limits."""
+        board = self.deal.scoreboard()
+        state: Dict[str, Any] = {"type": "deal_state"}
+        state.update({key: board[key] for key in self.PUBLIC_DEAL_FIELDS if key in board})
+        return state
 
     def get_tool_schemas(self, engine: str = "live") -> List[Any]:
         import persona_tools.negotiation as negotiation
@@ -249,17 +268,28 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
 
         deal = self.deal
 
+        async def publish_deal_state():
+            # After the result callback, so telemetry never delays the model.
+            if broadcast is None:
+                return
+            try:
+                await broadcast(self.public_deal_state())
+            except Exception as exc:
+                logger.warning(f"[Negotiator] deal_state broadcast failed: {exc}")
+
         async def handle_concede_price(params):
             reason = (params.arguments or {}).get("reason", "buyer negotiated price")
             res = deal.concede(reason)
             logger.info(f"[Negotiator] concede_price -> {res}")
             await params.result_callback(res)
+            await publish_deal_state()
 
         async def handle_include_extra(params):
             item = (params.arguments or {}).get("item", "")
             res = deal.grant_extra(item)
             logger.info(f"[Negotiator] include_extra -> {res}")
             await params.result_callback(res)
+            await publish_deal_state()
 
         async def handle_close_deal(params):
             args = params.arguments or {}
@@ -267,6 +297,7 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
             res = deal.close(price)
             logger.info(f"[Negotiator] close_deal -> {res}")
             await params.result_callback(res)
+            await publish_deal_state()
 
         llm.register_function("concede_price", handle_concede_price)
         llm.register_function("include_extra", handle_include_extra)

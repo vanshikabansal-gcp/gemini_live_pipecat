@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.challenge.config.ts",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "build:challenge": "tsc --noEmit && vite build --config vite.challenge.config.ts",
+    "dev:challenge": "vite --host 0.0.0.0 --config vite.challenge.config.ts"
   },
   "dependencies": {
     "@pipecat-ai/voice-ui-kit": "0.13.1",
