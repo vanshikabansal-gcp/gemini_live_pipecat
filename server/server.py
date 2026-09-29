@@ -711,6 +711,7 @@ async def _challenge_connect(request: Request) -> Dict[str, Any]:
         instructions = None
     if not instructions:
         raise HTTPException(status_code=500, detail="The challenge is unavailable right now.")
+    instructions = abhay_challenge.with_challenge_rules(instructions)
     try:
         session_id, session_token, connection_id = session_access.issue(
             instructions=instructions,

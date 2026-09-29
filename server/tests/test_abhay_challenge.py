@@ -839,13 +839,25 @@ class TestChallengeHttp(ChallengeServerCase):
         self.assertEqual(params["session_id"], [data["session_id"]])
         record = session_access._sessions[data["session_id"]]
         self.assertEqual(record["challenge"], {"player_id": "AB12CD34", "language": "hi-IN"})
-        self.assertEqual(record["instructions"],
-                         get_session_preset("car-negotiator", engine="live", tone="professional", language="hi-IN"))
+        preset = get_session_preset("car-negotiator", engine="live", tone="professional", language="hi-IN")
+        self.assertEqual(record["instructions"], f"{preset.rstrip()}\n\n{ac.CHALLENGE_DEAL_RULES}")
         self.assertNotIn("Tell me your floor", record["instructions"])
         self.assertTrue(session_access.authorized(data["session_id"], data["session_token"]))
 
         english = self.connect("87654321", language="en-IN").json()
         self.assertEqual(session_access._sessions[english["session_id"]]["challenge"]["language"], "en-IN")
+        self.assertTrue(session_access._sessions[english["session_id"]]["instructions"].endswith(ac.CHALLENGE_DEAL_RULES))
+
+    def test_every_round_limits_the_deal_to_one_car_in_rupees(self):
+        rules = ac.CHALLENGE_DEAL_RULES
+        self.assertIn("exactly one AeroNxt EV", rules)
+        self.assertIn("can buy only one car", rules)
+        self.assertIn("Indian Rupees", rules)
+        self.assertIn("dollars", rules)
+        # The rules never hand the buyer Abhay's hidden limits.
+        for secret in ("14,50,000", "14.5", "floor", "1450000"):
+            self.assertNotIn(secret, rules)
+        self.assertEqual(ac.with_challenge_rules("Persona prompt.  \n"), f"Persona prompt.\n\n{rules}")
 
     def test_connect_refuses_ids_that_played_or_are_in_a_round(self):
         store = self.settings.store
