@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminLogin, ApiError, finishRound, getLeaderboard, startRound, validateRoundSocketUrl } from '../src/challenge/challenge-api.ts';
+import { adminLogin, ApiError, finishRound, getLeaderboard, resetBoard, RESET_CONFIRM_WORD, startRound, validateRoundSocketUrl } from '../src/challenge/challenge-api.ts';
 
 function mockFetch(handler) {
   const calls = [];
@@ -82,4 +82,18 @@ test('finishRound authenticates with the session token and decodes the result', 
   const unscored = await finishRound('s', 't');
   assert.equal(unscored.not_recorded_reason, 'no_speech');
   assert.equal(unscored.can_retry, true);
+});
+
+test('resetBoard sends the organizer token in a header with the explicit confirmation', async () => {
+  const calls = mockFetch(async () => ({ body: { removed: 7 } }));
+  assert.equal(RESET_CONFIRM_WORD, 'RESET');
+  assert.deepEqual(await resetBoard('tok.en.sig'), { removed: 7 });
+  assert.equal(calls[0].url, '/api/challenge/admin/reset');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers['X-Admin-Token'], 'tok.en.sig');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { confirm: 'RESET' });
+  assert.ok(!calls[0].url.includes('tok.en.sig'));
+  // An expired organizer session surfaces as a 401 the UI can act on.
+  mockFetch(async () => ({ status: 401, body: { detail: 'Organizer session expired' } }));
+  await assert.rejects(resetBoard('old'), err => err instanceof ApiError && err.status === 401);
 });

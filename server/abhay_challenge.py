@@ -343,6 +343,15 @@ class LeaderboardStore:
     def total_players(self) -> int:
         raise NotImplementedError
 
+    def reset(self) -> int:
+        """Organizer action: wipe every score so the board starts empty and
+        every ID can play again. Returns how many scores were removed.
+
+        The attempts audit log is kept, and so are claims: a round that is on
+        the line right now still finishes and lands on the fresh board.
+        """
+        raise NotImplementedError
+
 
 class MemoryLeaderboard(LeaderboardStore):
     """Process-local store for tests and local runs. Lost on restart and not
@@ -404,6 +413,12 @@ class MemoryLeaderboard(LeaderboardStore):
     def total_players(self) -> int:
         with self._lock:
             return len(self._players)
+
+    def reset(self) -> int:
+        with self._lock:
+            removed = len(self._players)
+            self._players.clear()
+            return removed
 
 
 class FirestoreError(RuntimeError):
@@ -694,6 +709,28 @@ class FirestoreLeaderboard(LeaderboardStore):
             rank = total = None
         return {"already_played": False, "entry": entry, "rank": rank, "total_players": total}
 
+    _RESET_PAGE = 300  # A commit takes at most 500 writes.
+    _RESET_MAX_PAGES = 1000
+
+    def reset(self) -> int:
+        removed = 0
+        for _ in range(self._RESET_MAX_PAGES):
+            deleted = self._with_retries(self._reset_page)
+            if not deleted:
+                return removed
+            removed += deleted
+        raise RuntimeError("Leaderboard reset did not finish; run it again")
+
+    def _reset_page(self) -> int:
+        """Delete one page of scores. Always reads the first page: the one
+        before it is gone, so no page token is needed."""
+        params = {"pageSize": self._RESET_PAGE, "mask.fieldPaths": "player_id"}
+        listing = self._call("GET", f"/{self._players}", params=params).json()
+        names = [doc["name"] for doc in listing.get("documents") or [] if doc.get("name")]
+        if names:
+            self._call("POST", ":commit", body={"writes": [{"delete": name} for name in names]})
+        return len(names)
+
 
 class BoardCache:
     """Serves the top of the board from memory for a few seconds.
@@ -717,6 +754,13 @@ class BoardCache:
         """A new score landed: the next read refetches. The old board stays
         available as the stale fallback if that refetch fails."""
         with self._lock:
+            self._dirty = True
+
+    def clear(self) -> None:
+        """The board was wiped: forget the cached copy too, so a failed
+        refetch can never bring the old scores back as the stale fallback."""
+        with self._lock:
+            self._value = None
             self._dirty = True
 
     def get(self) -> Dict[str, Any]:
@@ -930,6 +974,8 @@ class ChallengeSettings:
     # Brute-force guard: 5 password attempts per minute and 20 per hour per address.
     login_limiter: SlidingWindowLimiter = field(default_factory=lambda: SlidingWindowLimiter(5, 60))
     login_hourly_limiter: SlidingWindowLimiter = field(default_factory=lambda: SlidingWindowLimiter(20, 3600))
+    # Board resets are rare organizer actions and each one rewrites Firestore.
+    reset_limiter: SlidingWindowLimiter = field(default_factory=lambda: SlidingWindowLimiter(5, 60))
     _active: int = 0
     _active_lock: threading.Lock = field(default_factory=threading.Lock)
 

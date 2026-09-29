@@ -137,3 +137,17 @@ export async function adminLogin(password: string): Promise<AdminSession> {
     revealTopN: typeof body.reveal_top_n === "number" ? body.reveal_top_n : 3,
   };
 }
+
+/** The word the organizer types to confirm a reset; the server checks it too. */
+export const RESET_CONFIRM_WORD = "RESET";
+
+/** Organizer only: empty the leaderboard so every ID can play again. */
+export async function resetBoard(adminToken: string): Promise<{ removed: number }> {
+  const body = await request<{ removed?: unknown }>("/api/challenge/admin/reset", {
+    method: "POST",
+    body: { confirm: RESET_CONFIRM_WORD },
+    headers: { "X-Admin-Token": adminToken },
+    timeoutMs: 60000,
+  });
+  return { removed: typeof body.removed === "number" ? body.removed : 0 };
+}

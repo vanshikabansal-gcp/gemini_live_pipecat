@@ -794,6 +794,39 @@ async def challenge_admin_login(request: Request) -> Dict[str, Any]:
     return {"token": token, "expires_at_ms": expires_at * 1000, "reveal_top_n": settings.reveal_top_n}
 
 
+RESET_CONFIRM_WORD = "RESET"
+
+
+@app.post("/api/challenge/admin/reset")
+async def challenge_admin_reset(request: Request) -> Dict[str, Any]:
+    """Organizer only: empty the leaderboard so every ID can play again.
+
+    Needs the organizer token from /admin/login and ``{"confirm": "RESET"}``
+    so a stray request cannot wipe the board.
+    """
+    settings = _require_challenge()
+    if not settings.admin.enabled:
+        raise HTTPException(status_code=404, detail="Organizer access is not configured")
+    if not settings.reset_limiter.allow(_caller(request)):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    admin_token = request.headers.get("x-admin-token")
+    if not admin_token or not settings.admin.verify_token(admin_token):
+        raise HTTPException(status_code=401, detail="Organizer session expired")
+    body = await _read_small_json(request, 1024)
+    if body.get("confirm") != RESET_CONFIRM_WORD:
+        raise HTTPException(status_code=400, detail=f'Send {{"confirm": "{RESET_CONFIRM_WORD}"}} to reset')
+    try:
+        removed = await asyncio.to_thread(settings.store.reset)
+    except Exception as exc:
+        _safe_print(f"Leaderboard reset failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail="Reset failed. Try again.")
+    finally:
+        # Even a partial wipe must not be hidden behind the cached board.
+        settings.board.clear()
+    _safe_print(f"Organizer reset the leaderboard ({removed} scores removed)")
+    return {"removed": removed}
+
+
 @app.post("/api/challenge/finish")
 async def challenge_finish(request: Request) -> Dict[str, Any]:
     """End the caller's own round now and return its score (or the score of a

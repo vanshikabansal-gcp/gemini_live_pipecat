@@ -184,6 +184,7 @@ class FakeFirestore:
         self.rollbacks = 0
         self.commit_failures = []  # statuses to return for the next commits
         self.lose_next_commit_response = False  # apply the commit, then report 503
+        self.listed_pages = 0
 
     @staticmethod
     def _path(name):
@@ -202,7 +203,13 @@ class FakeFirestore:
             self.rollbacks += 1
             return FakeResponse(200, {})
         if suffix == ":commit":
-            assert json["transaction"] == "tx-1"
+            if "transaction" in json:
+                assert json["transaction"] == "tx-1"
+            else:
+                # Only the organizer reset commits outside a transaction, and
+                # it only ever deletes, in batches Firestore accepts.
+                assert all(set(w) == {"delete"} for w in json["writes"]), json["writes"]
+                assert 0 < len(json["writes"]) <= 500
             if self.commit_failures:
                 status = self.commit_failures.pop(0)
                 return FakeResponse(status, {"error": {"status": "ABORTED" if status == 409 else "DENIED"}})
@@ -239,6 +246,14 @@ class FakeFirestore:
             if not rows:
                 return FakeResponse(200, [{"readTime": "2026-01-01T00:00:00Z"}])
             return FakeResponse(200, [{"document": {"name": "x", "fields": r}} for r in rows])
+        if method == "GET" and suffix.count("/") == 1:
+            # List one collection, names only (the reset asks for a field mask).
+            collection = suffix.lstrip("/")
+            assert params["mask.fieldPaths"] == "player_id", params
+            names = sorted(p for p in self.docs if p.split("/")[0] == collection)[: params["pageSize"]]
+            self.listed_pages += 1
+            return FakeResponse(200, {"documents": [{"name": f"projects/proj/databases/(default)/documents/{n}"}
+                                                    for n in names]} if names else {})
         if method == "GET":
             assert params in (None, {"transaction": "tx-1"}), params
             fields = self.docs.get(suffix.lstrip("/"))
@@ -351,6 +366,25 @@ class TestFirestoreLeaderboard(unittest.TestCase):
         self.store.record(make_result("44444444"))
         self.assertEqual([e["player_id"] for e in self.store.top(10)], ["44444444"])
 
+    def test_reset_wipes_every_score_in_pages_and_frees_the_ids(self):
+        store, fake = self.store, self.fake
+        store._RESET_PAGE = 2  # Force several pages.
+        for i in range(5):
+            store.record(make_result(f"9000000{i}", 1_600_000 + i, at_ms=i, session_id=f"s{i}"))
+        store.claim("ZZ99YY88", "live", 1_000, 60_000)  # A round on the line right now.
+        fake.commit_failures = [409]  # Contention on one page is retried.
+        self.assertEqual(store.reset(), 5)
+        self.assertEqual(store.total_players(), 0)
+        self.assertEqual(store.top(10), [])
+        # 2 + 2 + 1, then an empty page; the retried first page was listed twice.
+        self.assertEqual(fake.listed_pages, 5)
+        # The audit log and the live claim survive; the old IDs can play again.
+        self.assertEqual(len([p for p in fake.docs if p.startswith("abhay_challenge_attempts/")]), 5)
+        self.assertIn("abhay_challenge_claims/ZZ99YY88", fake.docs)
+        self.assertEqual(store.status("90000000", 2_000), ac.ID_FREE)
+        self.assertEqual(store.claim("90000000", "again", 2_000, 60_000), ac.CLAIM_OK)
+        self.assertEqual(store.reset(), 0)  # Resetting an empty board is harmless.
+
     def test_build_store_validates_its_configuration(self):
         store = ac.build_store({"LEADERBOARD_BACKEND": "firestore", "GCP_PROJECT_ID": "p",
                                 "CHALLENGE_COLLECTION_PREFIX": "Bad Prefix!",
@@ -384,6 +418,22 @@ class TestBoardCache(unittest.TestCase):
             now[0] = 100
             with self.assertRaises(RuntimeError):
                 cache.get()
+
+    def test_a_reset_board_is_never_served_from_the_cache(self):
+        store = ac.MemoryLeaderboard()
+        cache = ac.BoardCache(store, ttl_s=5, stale_ok_s=60, clock=lambda: 0.0)
+        store.record(make_result("11111111"))
+        store.claim("ZZ99YY88", "live", 1_000, 60_000)
+        self.assertEqual(cache.get()["total_players"], 1)
+        self.assertEqual(store.reset(), 1)
+        cache.clear()
+        # Even if the refetch fails, the wiped scores must not come back.
+        with patch.object(store, "top", side_effect=RuntimeError("down")):
+            with self.assertRaises(RuntimeError):
+                cache.get()
+        self.assertEqual(cache.get(), {"entries": [], "total_players": 0, "stale": False})
+        self.assertEqual(store.status("11111111", 2_000), ac.ID_FREE)
+        self.assertEqual(store.status("ZZ99YY88", 2_000), ac.ID_BUSY)  # The live round keeps its claim.
 
 
 # ---------------------------------------------------------------------------
@@ -941,6 +991,7 @@ class TestStudioModeIsUnchanged(unittest.TestCase):
         self.assertEqual(client.get("/api/challenge/leaderboard").status_code, 404)
         self.assertEqual(client.post("/api/challenge/admin/login", json={"password": PASSWORD}).status_code, 404)
         self.assertEqual(client.post("/api/challenge/finish", json={"session_id": "x"}).status_code, 404)
+        self.assertEqual(client.post("/api/challenge/admin/reset", json={"confirm": "RESET"}).status_code, 404)
         self.assertEqual(client.get("/connect/system-prompt").status_code, 200)
         self.assertNotIn("x-frame-options", client.get("/connect/system-prompt").headers)
 
@@ -1108,6 +1159,45 @@ class TestChallengeHttp(ChallengeServerCase):
         self.assertEqual(self.client.post("/api/challenge/admin/login",
                                           json={"password": PASSWORD}).status_code, 404)
         self.assertFalse(self.client.get("/api/challenge/config").json()["admin_enabled"])
+
+    def reset(self, token=None, body=None):
+        headers = {"X-Admin-Token": token} if token is not None else {}
+        return self.client.post("/api/challenge/admin/reset", json={"confirm": "RESET"} if body is None else body,
+                                headers=headers)
+
+    def test_organizer_can_reset_the_board_and_ids_play_again(self):
+        self.settings.reset_limiter = ac.SlidingWindowLimiter(20, 60)
+        self.seed_board()
+        self.assertEqual(self.client.get("/api/challenge/leaderboard").json()["total_players"], 5)
+        # No token, a forged token or a missing confirmation never wipes anything.
+        self.assertEqual(self.reset().status_code, 401)
+        self.assertEqual(self.reset("forged.token.value").status_code, 401)
+        token = self.client.post("/api/challenge/admin/login", json={"password": PASSWORD}).json()["token"]
+        for body in ({}, {"confirm": "reset"}, {"confirm": True}):
+            with self.subTest(body=body):
+                self.assertEqual(self.reset(token, body).status_code, 400)
+        self.assertEqual(self.settings.store.total_players(), 5)
+
+        response = self.reset(token)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"removed": 5})
+        board = self.client.get("/api/challenge/leaderboard").json()
+        self.assertEqual((board["entries"], board["total_players"]), ([], 0))
+        # A player whose ID was on the old board can play again.
+        self.assertEqual(self.connect("90000001").status_code, 200)
+
+    def test_reset_is_rate_limited_needs_organizer_access_and_reports_failures(self):
+        token = self.client.post("/api/challenge/admin/login", json={"password": PASSWORD}).json()["token"]
+        with patch.object(self.settings.store, "reset", side_effect=RuntimeError("down")):
+            failed = self.reset(token)
+        self.assertEqual(failed.status_code, 503)
+        self.assertNotIn("down", failed.text)
+        self.settings.reset_limiter = ac.SlidingWindowLimiter(1, 60)
+        self.assertEqual(self.reset(token).status_code, 200)
+        self.assertEqual(self.reset(token).status_code, 429)
+        self.settings.admin = ac.AdminAuth(None)
+        self.settings.reset_limiter = ac.SlidingWindowLimiter(10, 60)
+        self.assertEqual(self.reset(token).status_code, 404)
 
     def test_finish_needs_the_rounds_own_session_token(self):
         data = self.connect().json()

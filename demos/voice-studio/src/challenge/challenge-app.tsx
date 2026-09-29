@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Target,
   Timer,
+  Trash2,
   Trophy,
   UserRound,
   X,
@@ -24,6 +25,8 @@ import {
   finishRound,
   getConfig,
   getLeaderboard,
+  resetBoard,
+  RESET_CONFIRM_WORD,
   startRound,
   type AdminSession,
   type RoundTicket,
@@ -159,10 +162,11 @@ type BoardProps = {
   maskedPlayer: string | null;
   admin: AdminSession | null;
   onAdmin: (session: AdminSession | null) => void;
+  onBoardReset: () => void;
   standalone?: boolean;
 };
 
-function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, standalone }: BoardProps) {
+function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, onBoardReset, standalone }: BoardProps) {
   const panelRef = useRef<HTMLElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [organizerOpen, setOrganizerOpen] = useState(false);
@@ -237,10 +241,11 @@ function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, 
         </div>
       </header>
 
-      {revealed && (
+      {(revealed || admin) && (
         <div className="ch-reveal-banner" role="status">
           <Crown aria-hidden="true" />
           <span>Organizer view: full IDs shown for the top {board?.reveal_top_n ?? config.reveal_top_n}</span>
+          <button type="button" onClick={() => setOrganizerOpen(true)}>Reset board</button>
           <button type="button" onClick={() => onAdmin(null)}>Hide IDs</button>
         </div>
       )}
@@ -270,6 +275,7 @@ function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, 
           revealTopN={config.reveal_top_n}
           onClose={() => setOrganizerOpen(false)}
           onAdmin={session => { onAdmin(session); if (session) setOrganizerOpen(false); }}
+          onBoardReset={onBoardReset}
         />
       )}
     </aside>
@@ -305,16 +311,21 @@ function OrganizerDialog({
   revealTopN,
   onClose,
   onAdmin,
+  onBoardReset,
 }: {
   admin: AdminSession | null;
   revealTopN: number;
   onClose: () => void;
   onAdmin: (session: AdminSession | null) => void;
+  onBoardReset: () => void;
 }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [confirmText, setConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetNote, setResetNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!admin) return;
@@ -334,6 +345,25 @@ function OrganizerDialog({
       setError(errorText(err, "Could not sign in"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const reset = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!admin || resetting || confirmText.trim() !== RESET_CONFIRM_WORD) return;
+    setResetting(true);
+    setError(null);
+    setResetNote(null);
+    try {
+      const { removed } = await resetBoard(admin.token);
+      setConfirmText("");
+      setResetNote(`Board reset. ${removed === 1 ? "1 score" : `${removed} scores`} removed; every ID can play again.`);
+      onBoardReset();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) onAdmin(null);
+      setError(errorText(err, "Could not reset the board"));
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -361,10 +391,39 @@ function OrganizerDialog({
                 Hide IDs
               </button>
             </div>
+            <form className="ch-danger-zone" onSubmit={reset}>
+              <h4><Trash2 aria-hidden="true" /> Reset leaderboard</h4>
+              <p>
+                Deletes every score on the board and lets every ID play again. This cannot be undone.
+                Type <strong>{RESET_CONFIRM_WORD}</strong> to confirm.
+              </p>
+              <input
+                className="ch-input"
+                aria-label={`Type ${RESET_CONFIRM_WORD} to confirm`}
+                autoComplete="off"
+                spellCheck={false}
+                value={confirmText}
+                maxLength={16}
+                placeholder={RESET_CONFIRM_WORD}
+                onChange={event => { setConfirmText(event.target.value.toUpperCase()); setResetNote(null); }}
+              />
+              {resetNote && <p className="ch-form-ok" role="status">{resetNote}</p>}
+              {error && <p className="ch-form-error" role="alert">{error}</p>}
+              <div className="ch-dialog-actions">
+                <button
+                  type="submit"
+                  className="ch-btn ch-btn-danger"
+                  disabled={resetting || confirmText.trim() !== RESET_CONFIRM_WORD}
+                >
+                  {resetting ? <LoaderCircle className="ch-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                  Reset board
+                </button>
+              </div>
+            </form>
           </>
         ) : (
           <form onSubmit={submit}>
-            <p>Enter the organizer password to reveal the full IDs of the top {revealTopN} players.</p>
+            <p>Enter the organizer password to reveal the full IDs of the top {revealTopN} players or reset the board.</p>
             <label className="ch-field-label" htmlFor="ch-organizer-password">Password</label>
             <input
               id="ch-organizer-password"
@@ -428,6 +487,7 @@ export default function ChallengeApp() {
           maskedPlayer={null}
           admin={admin}
           onAdmin={setAdmin}
+          onBoardReset={refresh}
           standalone
         />
       </div>
@@ -890,6 +950,7 @@ function GameScreen({ config, board, boardError, refreshBoard, admin, setAdmin }
           maskedPlayer={maskedPlayer}
           admin={admin}
           onAdmin={setAdmin}
+          onBoardReset={refreshBoard}
         />
       </main>
     </div>

@@ -419,6 +419,18 @@ svg { width: 1.1em; height: 1.1em; flex-shrink: 0; }
 .ch-dialog-close:hover { color: var(--ch-text); background: var(--ch-surface-2); }
 .ch-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
+.ch-danger-zone {
+  margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ch-line-strong);
+}
+.ch-danger-zone h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 15px; color: #ffb3a8; }
+.ch-danger-zone h4 svg { width: 16px; height: 16px; }
+.ch-danger-zone p { font-size: 13.5px; margin-bottom: 10px; }
+.ch-danger-zone .ch-dialog-actions { margin-top: 12px; }
+.ch-form-ok {
+  margin: 12px 0 0 !important; padding: 10px 12px; border-radius: 10px;
+  background: rgba(213, 245, 128, 0.1); border: 1px solid rgba(213, 245, 128, 0.35); color: #e2fb9c !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
