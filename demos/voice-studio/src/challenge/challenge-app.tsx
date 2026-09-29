@@ -12,6 +12,7 @@ import {
   Monitor,
   PhoneOff,
   RotateCcw,
+  Target,
   Timer,
   Trophy,
   UserRound,
@@ -47,6 +48,9 @@ import {
   type LeaderboardEntry,
 } from "./challenge-logic.ts";
 import { openChallengeSession, type ChallengeSession } from "./challenge-session.ts";
+
+/** The organisers' public dare. Abhay's real limits stay on the server. */
+const GOAL_PRICE_LABEL = "₹14.5 lakh";
 
 const DEFAULT_CONFIG: ChallengeConfig = {
   duration_s: 120,
@@ -206,7 +210,7 @@ function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, 
           <Trophy aria-hidden="true" />
           <div>
             <h2>Leaderboard</h2>
-            <p>{board ? `${playersLabel(board.total_players)} · lowest price wins` : "Lowest price wins"}</p>
+            <p>{board ? `${playersLabel(board.total_players)} · goal: below ${GOAL_PRICE_LABEL} · lowest price wins` : `Goal: below ${GOAL_PRICE_LABEL} · lowest price wins`}</p>
           </div>
         </div>
         <div className="ch-board-actions">
@@ -698,11 +702,12 @@ function GameScreen({ config, board, boardError, refreshBoard, admin, setAdmin }
                 <img src="/personas/abhay.webp" alt="" className="ch-avatar-lg" />
                 <div>
                   <p className="ch-kicker">Can you out-haggle Delhi's toughest car dealer?</p>
-                  <h1>Talk Abhay down on the AeroNxt EV</h1>
+                  <h1>Get Abhay below {GOAL_PRICE_LABEL} on the AeroNxt EV</h1>
                 </div>
               </div>
               <ul className="ch-rules">
-                <li><Timer aria-hidden="true" /> You get <strong>{formatCountdown(durationMs)}</strong> to negotiate by voice. Abhay opens at ₹20 lakh.</li>
+                <li><Target aria-hidden="true" /> <strong>Your goal: get the price below {GOAL_PRICE_LABEL}.</strong> Abhay opens at ₹20 lakh and never drops on the first ask. Keep pushing, and get creative.</li>
+                <li><Timer aria-hidden="true" /> You get <strong>{formatCountdown(durationMs)}</strong> to negotiate by voice, for one car, in rupees.</li>
                 <li><Trophy aria-hidden="true" /> When time's up, Abhay's price at that moment goes on the board. Lowest price wins; more perks breaks a tie.</li>
                 <li><UserRound aria-hidden="true" /> Your ID shows as <strong>****</strong> plus its last 4 characters. Each ID gets one round, and its score is final.</li>
               </ul>

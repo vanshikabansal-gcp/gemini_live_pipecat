@@ -29,8 +29,9 @@ rules can be tested in milliseconds.
 from __future__ import annotations
 
 import math
+import random
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 CAR_NAME = "AeroNxt EV"
 
@@ -54,6 +55,10 @@ DEFAULT_INR_PER_USD: float = 83.0
 
 # A bare number this small in a close_deal call is lakh shorthand ("14.5").
 _LAKH_SHORTHAND_MAX = 1_000
+
+# Concession pace (optional, off by default). How the buyer has been pushing,
+# as judged by the seller, shifts how many buyer turns a price step costs.
+EFFORT_ADJUST: Dict[str, int] = {"low": 1, "medium": 0, "high": -1}
 
 
 def _indian_grouping(value: int) -> str:
@@ -125,6 +130,9 @@ class Deal:
         extras: Optional[Dict[str, Dict[str, Any]]] = None,
         extras_budget: int = EXTRAS_BUDGET_INR,
         strict_ladder: bool = False,
+        pace: Optional[Tuple[int, int]] = None,
+        min_turns_per_step: int = 2,
+        rng: Optional[random.Random] = None,
     ):
         self._ladder = list(ladder or LADDER_INR)
         self._floor = self._ladder[-1]
@@ -138,11 +146,75 @@ class Deal:
         # Stays False forever. Surfaced so the UI can prove it, not assume it.
         self.floor_breached = False
         self.rejected_attempts = 0
+        # Concession pace. None (the default) means the model alone decides
+        # when to concede. With pace=(lo, hi), every price step costs a fresh,
+        # hidden, random number of buyer turns in [lo, hi], nudged by how hard
+        # and how creatively the buyer is pushing, and never fewer than
+        # min_turns_per_step: no price moves on a single ask.
+        self._pace: Optional[Tuple[int, int]] = None
+        self._min_turns = 1
+        self._rng = rng or random.Random()
+        self._turns_since_step = 0
+        self._turns_needed = 0
+        self.too_soon_attempts = 0
+        # Organizer override (see apply_special_price). None = normal rules.
+        self.special_price: Optional[int] = None
+        if pace is not None:
+            self.set_pace(pace, min_turns_per_step)
+
+    # -- pace -------------------------------------------------------------
+
+    def set_pace(self, pace: Tuple[int, int], min_turns_per_step: int = 2) -> None:
+        low, high = int(pace[0]), int(pace[1])
+        if low < 1 or high < low:
+            raise ValueError(f"invalid pace {pace!r}")
+        self._pace = (low, high)
+        self._min_turns = max(1, int(min_turns_per_step))
+        self._draw_turns_needed()
+
+    def _draw_turns_needed(self) -> None:
+        if self._pace is not None:
+            self._turns_needed = self._rng.randint(*self._pace)
+
+    def note_buyer_turn(self) -> None:
+        """The buyer finished another turn. Only counted when a pace is set."""
+        if self._pace is not None:
+            self._turns_since_step += 1
+
+    @property
+    def turns_since_step(self) -> int:
+        return self._turns_since_step
+
+    def turns_required(self, effort: Any = None) -> int:
+        """Buyer turns this step costs at the given effort. 0 when unpaced."""
+        if self._pace is None:
+            return 0
+        adjust = EFFORT_ADJUST.get(str(effort or "medium").strip().lower(), 0)
+        return max(self._min_turns, self._turns_needed + adjust)
+
+    # -- organizer override --------------------------------------------------
+
+    def apply_special_price(self, price_inr: int) -> Dict[str, Any]:
+        """Organizer override (challenge magic word). Server code only.
+
+        No model tool reaches this: the model can neither trigger it nor pick
+        the number. The special price becomes the new stone wall for the rest
+        of the round and replaces any earlier handshake.
+        """
+        amount = int(price_inr)
+        if amount <= 0:
+            raise ValueError("special price must be positive")
+        self.special_price = amount
+        self.sold = False
+        self.sold_price = None
+        return {"price": amount, "special": True}
 
     # -- price ------------------------------------------------------------
 
     @property
     def price(self) -> int:
+        if self.special_price is not None:
+            return self.special_price
         return self._ladder[self._rung]
 
     @property
@@ -151,12 +223,14 @@ class Deal:
 
     @property
     def at_floor(self) -> bool:
-        return self._rung >= len(self._ladder) - 1
+        return self.special_price is not None or self._rung >= len(self._ladder) - 1
 
-    def concede(self, reason: str = "") -> Dict[str, Any]:
+    def concede(self, reason: str = "", effort: Any = None) -> Dict[str, Any]:
         """Move one rung down the ladder, or refuse because we are at the floor.
 
-        The model cannot choose the amount. That is the whole point.
+        The model cannot choose the amount. That is the whole point. With a
+        pace set, it cannot choose the timing either: a step the buyer has not
+        yet earned is refused and the price holds.
         """
         if self.at_floor:
             return {
@@ -169,7 +243,25 @@ class Deal:
                     f"I'm out of business. Take it or leave the showroom."
                 ),
             }
+        if self._pace is not None and self._turns_since_step < self.turns_required(effort):
+            self.too_soon_attempts += 1
+            return {
+                "price": self.price,
+                "moved": False,
+                "at_floor": False,
+                "too_soon": True,
+                "reason": reason,
+                # No counts here: the model must not be able to tell the buyer
+                # how many more pushes it takes.
+                "say": (
+                    f"Too soon. The price stays {format_inr(self.price)}; do not say any new number. "
+                    "Make the buyer work harder: answer with one sarcastic dealer line and, if a perk "
+                    "is left, throw one in with include_extra instead of cash."
+                ),
+            }
         self._rung += 1
+        self._turns_since_step = 0
+        self._draw_turns_needed()
         return {
             "price": self.price,
             "moved": True,
@@ -181,7 +273,8 @@ class Deal:
     def close(self, price_inr: Any) -> Dict[str, Any]:
         """Sell the car, if and only if the price clears the floor."""
         amount = _as_amount(price_inr)
-        if amount is None or amount < self._floor:
+        minimum = self.special_price if self.special_price is not None else self._floor
+        if amount is None or amount < minimum:
             self.rejected_attempts += 1
             return {
                 "status": "rejected",
@@ -427,7 +520,18 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "reason": {
                 "type": "string",
                 "description": "One short phrase: what the buyer said that moved you.",
-            }
+            },
+            "effort": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "description": (
+                    "How hard and how creatively the buyer has been pushing since your last price move. "
+                    "high = the buyer gave a specific, reasoned argument: competitor or market prices, model "
+                    "or timing logic, payment certainty, referrals or publicity, a trade-off, or genuine wit "
+                    "(most thoughtful pushes are high); medium = plain haggling, a bare counter-offer or a "
+                    "walk-away threat with no new reason; low = lazy, repetitive 'kam karo' with no argument."
+                ),
+            },
         },
         "required": ["reason"],
     },

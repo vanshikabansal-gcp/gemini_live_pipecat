@@ -744,6 +744,162 @@ class TestPublicDealState(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("floor", order[1][1])
 
 
+class TestChallengeConcessionPace(unittest.IsolatedAsyncioTestCase):
+    """Abhay drops a step only after the buyer keeps pushing (random per step)."""
+
+    def paced_arch(self, *draws):
+        from persona_registry import get_persona_architecture
+
+        arch = get_persona_architecture("car-negotiator")
+        arch.deal._rng = SimpleNamespace(randint=lambda lo, hi, d=list(draws): d.pop(0))
+        arch.set_concession_pace(ac.CONCESSION_PACE, ac.MIN_TURNS_PER_STEP)
+        return arch
+
+    def test_every_round_is_paced_by_default(self):
+        config = ac.ChallengeConfig(
+            session_id="s", player_id="AB12CD34", language="hi-IN", duration_s=120, store=None,
+        )
+        self.assertEqual(config.concession_pace, (2, 4))
+        self.assertEqual(config.min_turns_per_step, 2)
+
+    async def test_a_turn_split_into_sentences_counts_once(self):
+        arch = self.paced_arch(2, 2)
+        await arch.on_user_transcript("Abhay, thoda kam karo.")
+        await arch.on_user_transcript("Main cash dunga.")
+        self.assertFalse(arch.deal.concede("x")["moved"])
+        arch.on_bot_turn_complete()
+        await arch.on_user_transcript("Kam karo na bhai.")
+        arch.on_bot_turn_complete()
+        self.assertTrue(arch.deal.concede("x")["moved"])
+
+    async def test_blank_transcripts_do_not_count(self):
+        arch = self.paced_arch(2, 2)
+        for _ in range(3):
+            await arch.on_user_transcript("   ")
+            arch.on_bot_turn_complete()
+        self.assertFalse(arch.deal.concede("x")["moved"])
+
+    async def test_handler_passes_the_effort_rating(self):
+        arch = self.paced_arch(3, 3)
+        results = []
+
+        class DummyLLM:
+            functions = {}
+
+            def register_function(self, name, handler):
+                self.functions[name] = handler
+
+        async def result_callback(result):
+            results.append(result)
+
+        llm = DummyLLM()
+        arch.register_handlers(llm)
+        for _ in range(2):
+            await arch.on_user_transcript("kam karo")
+            arch.on_bot_turn_complete()
+        concede = llm.functions["concede_price"]
+        await concede(SimpleNamespace(arguments={"reason": "lazy", "effort": "low"}, result_callback=result_callback))
+        await concede(SimpleNamespace(arguments={"reason": "clever", "effort": "high"}, result_callback=result_callback))
+        self.assertEqual([r["moved"] for r in results], [False, True])
+        self.assertEqual(arch.public_deal_state()["cash_price"], 1_875_000)
+
+    def test_voice_studio_abhay_stays_unpaced(self):
+        from persona_registry import get_persona_architecture
+
+        arch = get_persona_architecture("car-negotiator")
+        self.assertTrue(arch.deal.concede("first ask")["moved"])
+
+
+class TestMagicWord(unittest.IsolatedAsyncioTestCase):
+    """Organizer magic word: heard by the server, never shown to Abhay."""
+
+    WORDS = ac.parse_magic_words("Giraffe, ज़िराफ़, जिराफ, giraffe, जीराफ़, ab")
+
+    def test_parsing_normalizes_dedupes_and_drops_short_variants(self):
+        self.assertEqual(self.WORDS, ("giraffe", "जिराफ", "जीराफ"))
+        self.assertEqual(ac.parse_magic_words(None), ())
+        self.assertEqual(ac.parse_magic_words(" , "), ())
+
+    def test_matching_is_whole_word_case_and_nukta_insensitive(self):
+        for said in ("Giraffe!", "okay giraffe, final price?", "GIRAFFES", "भाई जिराफ", "भाई ज़िराफ़ बोलो", "जीराफ"):
+            with self.subTest(said=said):
+                self.assertTrue(ac.says_magic_word(said, self.WORDS))
+        for said in ("giraffeland", "gir affe", "thoda kam karo", ""):
+            with self.subTest(said=said):
+                self.assertFalse(ac.says_magic_word(said, self.WORDS))
+        self.assertFalse(ac.says_magic_word("giraffe", ()))
+
+    def test_settings_read_the_secret_and_default_off(self):
+        base = {"APP_MODE": "abhay-challenge", "LEADERBOARD_BACKEND": "memory"}
+        self.assertEqual(ac.settings_from_env(base).magic_words, ())
+        on = ac.settings_from_env({**base, "CHALLENGE_MAGIC_WORD": "giraffe,जिराफ"})
+        self.assertEqual(on.magic_words, ("giraffe", "जिराफ"))
+        self.assertNotIn("giraffe", repr(on))
+        config = ac.ChallengeConfig(session_id="s", player_id="AB12CD34", language="hi-IN", duration_s=120,
+                                    store=None, magic_words=on.magic_words)
+        self.assertNotIn("giraffe", repr(config))
+        self.assertEqual(config.magic_price_inr, 13_00_000)
+
+    def test_the_word_is_never_in_abhays_prompt(self):
+        # The prompt texts are fixed; the word only ever comes from the secret.
+        for text in (ac.CHALLENGE_DEAL_RULES, ac.MAGIC_PRICE_DIRECTIVE):
+            self.assertNotIn("magic word", text.lower())
+            self.assertNotIn("giraffe", text.lower())
+        self.assertIn("[SHOWROOM SYSTEM]", ac.CHALLENGE_DEAL_RULES)
+        self.assertTrue(ac.MAGIC_PRICE_DIRECTIVE.startswith("[SHOWROOM SYSTEM]"))
+        self.assertIn("13 lakh", ac.MAGIC_PRICE_DIRECTIVE)
+
+    def magic_arch(self):
+        from persona_registry import get_persona_architecture
+
+        arch = get_persona_architecture("car-negotiator")
+        sent, directives = [], []
+
+        class DummyLLM:
+            functions = {}
+
+            def register_function(self, name, handler):
+                self.functions[name] = handler
+
+            async def inject_directive(self, text, tag="Directive", speak_now=True, at_tool_boundary=False):
+                directives.append((text, tag, speak_now))
+                return True
+
+        async def broadcast(payload):
+            sent.append(payload)
+
+        arch.register_handlers(DummyLLM(), broadcast=broadcast)
+        arch.set_concession_pace(ac.CONCESSION_PACE, ac.MIN_TURNS_PER_STEP)
+        arch.enable_magic_word(lambda t: ac.says_magic_word(t, self.WORDS), ac.MAGIC_PRICE_INR,
+                               ac.MAGIC_PRICE_DIRECTIVE)
+        return arch, sent, directives
+
+    async def test_saying_the_word_sets_13_lakh_once_and_tells_abhay(self):
+        arch, sent, directives = self.magic_arch()
+        await arch.on_user_transcript("Abhay bhai, giraffe.")
+        self.assertEqual(arch.deal.price, 13_00_000)
+        self.assertEqual(sent[-1]["cash_price"], 13_00_000)
+        self.assertNotIn("floor", json.dumps(sent[-1]))
+        self.assertEqual(directives, [(ac.MAGIC_PRICE_DIRECTIVE, "Organizer", True)])
+        # One-shot: repeating it does nothing more.
+        await arch.on_user_transcript("giraffe giraffe")
+        self.assertEqual(len(directives), 1)
+        self.assertEqual(arch.public_deal_state()["cash_price"], 13_00_000)
+
+    async def test_ordinary_speech_never_triggers_it(self):
+        arch, sent, directives = self.magic_arch()
+        await arch.on_user_transcript("Thoda kam karo, giraffeland jaisa mat bano.")
+        self.assertEqual(arch.deal.price, 20_00_000)
+        self.assertEqual(directives, [])
+
+    async def test_off_when_not_configured(self):
+        from persona_registry import get_persona_architecture
+
+        arch = get_persona_architecture("car-negotiator")
+        await arch.on_user_transcript("giraffe")
+        self.assertEqual(arch.deal.price, 20_00_000)
+
+
 # ---------------------------------------------------------------------------
 # HTTP and WebSocket surface in challenge mode
 # ---------------------------------------------------------------------------
@@ -858,6 +1014,13 @@ class TestChallengeHttp(ChallengeServerCase):
         for secret in ("14,50,000", "14.5", "floor", "1450000"):
             self.assertNotIn(secret, rules)
         self.assertEqual(ac.with_challenge_rules("Persona prompt.  \n"), f"Persona prompt.\n\n{rules}")
+
+    def test_every_round_tells_abhay_to_make_the_buyer_work_for_each_step(self):
+        rules = ac.CHALLENGE_DEAL_RULES
+        for phrase in ("PRICE PACE", "Never lower the price the first time the buyer asks", "sarcastic",
+                       "include_extra", "exactly one step", "rate their effort", "Too soon",
+                       "never tell the buyer how many pushes"):
+            self.assertIn(phrase, rules)
 
     def test_connect_refuses_ids_that_played_or_are_in_a_round(self):
         store = self.settings.store

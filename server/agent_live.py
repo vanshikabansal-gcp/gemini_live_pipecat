@@ -909,6 +909,12 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
                 except Exception as exc:
                     logger.warning(f"[{deferred_tag}] Deferred directive flush failed: {exc}")
         architecture = getattr(self, "persona_architecture", None)
+        turn_done = getattr(architecture, "on_bot_turn_complete", None)
+        if turn_done is not None:
+            try:
+                turn_done()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"[Persona] on_bot_turn_complete failed: {exc}")
         flush = getattr(architecture, "flush_pending_card", None)
         if flush is not None:
             try:
@@ -2371,6 +2377,20 @@ async def run_agent_live(
 
         # The handler-bearing architecture instance owns the live Deal.
         deal_owner = persona_architecture
+        set_pace = getattr(deal_owner, "set_concession_pace", None)
+        pace = getattr(challenge, "concession_pace", None)
+        if set_pace is not None and pace:
+            set_pace(pace, getattr(challenge, "min_turns_per_step", 2))
+        magic_words = tuple(getattr(challenge, "magic_words", ()) or ())
+        enable_magic = getattr(deal_owner, "enable_magic_word", None)
+        if enable_magic is not None and magic_words:
+            from abhay_challenge import MAGIC_PRICE_DIRECTIVE, says_magic_word
+
+            enable_magic(
+                lambda text: says_magic_word(text, magic_words),
+                getattr(challenge, "magic_price_inr"),
+                MAGIC_PRICE_DIRECTIVE,
+            )
 
         async def send_challenge_event(payload: dict):
             # Urgent: the clock and the final result must not queue behind audio.

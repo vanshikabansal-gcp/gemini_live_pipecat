@@ -232,6 +232,9 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
 
     def __init__(self) -> None:
         self._deal = None
+        # True once the buyer has spoken since Abhay's last completed turn, so
+        # a turn split into several transcript sentences counts only once.
+        self._buyer_spoke_since_bot = False
 
     @property
     def deal(self):
@@ -241,6 +244,57 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
 
             self._deal = negotiation.Deal(strict_ladder=True)
         return self._deal
+
+    def set_concession_pace(self, pace, min_turns_per_step: int = 2) -> None:
+        """Make each price step cost a hidden, random number of buyer turns."""
+        self.deal.set_pace(pace, min_turns_per_step)
+
+    def enable_magic_word(self, matches: Callable[[str], bool], price_inr: int, directive: str) -> None:
+        """Organizer override: when ``matches(transcript)``, set ``price_inr``.
+
+        The check runs on the server against the player's own transcript. The
+        word is never sent to the model, so Abhay cannot leak it.
+        """
+        self._magic = (matches, int(price_inr), directive)
+        self.magic_used = False
+
+    async def _maybe_apply_magic_word(self, text: str, broadcast) -> bool:
+        magic = getattr(self, "_magic", None)
+        if magic is None or getattr(self, "magic_used", False):
+            return False
+        matches, price_inr, directive = magic
+        if not matches(text):
+            return False
+        from loguru import logger
+
+        self.magic_used = True
+        self.deal.apply_special_price(price_inr)
+        logger.info(f"[Negotiator] Organizer magic word heard: price set to {price_inr}")
+        send = broadcast or getattr(self, "_broadcast", None)
+        if send is not None:
+            try:
+                await send(self.public_deal_state())
+            except Exception as exc:
+                logger.warning(f"[Negotiator] deal_state broadcast failed: {exc}")
+        inject = getattr(getattr(self, "_llm", None), "inject_directive", None)
+        if inject is not None:
+            try:
+                await inject(directive, tag="Organizer", speak_now=True)
+            except Exception as exc:
+                logger.warning(f"[Negotiator] organizer directive failed: {exc}")
+        return True
+
+    async def on_user_transcript(self, text: str, broadcast=None) -> None:
+        if not text or not text.strip():
+            return
+        if await self._maybe_apply_magic_word(text, broadcast):
+            return
+        if not self._buyer_spoke_since_bot:
+            self._buyer_spoke_since_bot = True
+            self.deal.note_buyer_turn()
+
+    def on_bot_turn_complete(self) -> None:
+        self._buyer_spoke_since_bot = False
 
     def public_deal_state(self) -> Dict[str, Any]:
         """``deal_state`` event for the client: the live price, never the limits."""
@@ -267,6 +321,8 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
         from loguru import logger
 
         deal = self.deal
+        self._llm = llm
+        self._broadcast = broadcast
 
         async def publish_deal_state():
             # After the result callback, so telemetry never delays the model.
@@ -278,9 +334,13 @@ class NegotiatorLadderArchitecture(BasePersonaArchitecture):
                 logger.warning(f"[Negotiator] deal_state broadcast failed: {exc}")
 
         async def handle_concede_price(params):
-            reason = (params.arguments or {}).get("reason", "buyer negotiated price")
-            res = deal.concede(reason)
-            logger.info(f"[Negotiator] concede_price -> {res}")
+            args = params.arguments or {}
+            reason = args.get("reason", "buyer negotiated price")
+            effort = args.get("effort")
+            turns = f"{deal.turns_since_step}/{deal.turns_required(effort)}"
+            res = deal.concede(reason, effort=effort)
+            # Server log only: the pace numbers never go to the model or client.
+            logger.info(f"[Negotiator] concede_price (effort={effort}, turns={turns}) -> {res}")
             await params.result_callback(res)
             await publish_deal_state()
 

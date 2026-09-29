@@ -200,7 +200,139 @@ class TestScoreboard(unittest.TestCase):
         self.assertTrue(deal.scoreboard()["floor_held"])
 
 
+class _Draws:
+    """A stand-in RNG that returns scripted draws, and records the ranges."""
+
+    def __init__(self, *values):
+        self.values = list(values)
+        self.ranges = []
+
+    def randint(self, low, high):
+        self.ranges.append((low, high))
+        return self.values.pop(0)
+
+
+class TestConcessionPace(unittest.TestCase):
+    """Challenge pacing: a step costs a hidden, random number of buyer turns."""
+
+    def pushes(self, deal, n):
+        for _ in range(n):
+            deal.note_buyer_turn()
+
+    def test_unpaced_deal_is_unchanged(self):
+        deal = Deal(strict_ladder=True)
+        self.assertTrue(deal.concede("first ask")["moved"])
+        self.assertEqual(deal.turns_required("low"), 0)
+
+    def test_never_drops_on_the_first_ask(self):
+        deal = Deal(pace=(2, 4), rng=_Draws(2, 2))
+        self.pushes(deal, 1)
+        for effort in ("low", "medium", "high"):
+            result = deal.concede("one ask", effort=effort)
+            self.assertFalse(result["moved"])
+            self.assertTrue(result["too_soon"])
+        self.assertEqual(deal.price, LADDER_INR[0])
+        self.assertEqual(deal.too_soon_attempts, 3)
+
+    def test_step_needs_the_drawn_number_of_turns(self):
+        deal = Deal(pace=(2, 4), rng=_Draws(3, 4, 2))
+        self.pushes(deal, 2)
+        self.assertFalse(deal.concede("x", effort="medium")["moved"])
+        self.pushes(deal, 1)
+        self.assertTrue(deal.concede("x", effort="medium")["moved"])
+        self.assertEqual(deal.price, LADDER_INR[1])
+        # Each step redraws and the count starts over.
+        self.pushes(deal, 3)
+        self.assertFalse(deal.concede("x", effort="medium")["moved"])
+        self.pushes(deal, 1)
+        self.assertTrue(deal.concede("x", effort="medium")["moved"])
+
+    def test_one_drop_per_earned_window(self):
+        deal = Deal(pace=(2, 4), rng=_Draws(2, 2))
+        self.pushes(deal, 5)
+        self.assertTrue(deal.concede("x")["moved"])
+        self.assertFalse(deal.concede("again, same turn")["moved"])
+        self.assertEqual(deal.price, LADDER_INR[1])
+
+    def test_creative_effort_is_faster_and_lazy_effort_is_slower(self):
+        deal = Deal(pace=(2, 4), rng=_Draws(3))
+        self.assertEqual(deal.turns_required("high"), 2)
+        self.assertEqual(deal.turns_required("medium"), 3)
+        self.assertEqual(deal.turns_required("low"), 4)
+        self.assertEqual(deal.turns_required(None), 3)
+        self.assertEqual(deal.turns_required("nonsense"), 3)
+
+    def test_effort_never_goes_below_the_minimum(self):
+        deal = Deal(pace=(2, 4), min_turns_per_step=2, rng=_Draws(2))
+        self.assertEqual(deal.turns_required("high"), 2)
+
+    def test_draws_use_the_configured_range(self):
+        draws = _Draws(2, 3)
+        deal = Deal(pace=(2, 4), rng=draws)
+        self.pushes(deal, 2)
+        deal.concede("x")
+        self.assertEqual(draws.ranges, [(2, 4), (2, 4)])
+
+    def test_real_rng_stays_in_range_and_varies(self):
+        seen = {Deal(pace=(2, 4)).turns_required() for _ in range(200)}
+        self.assertTrue(seen <= {2, 3, 4})
+        self.assertGreater(len(seen), 1)
+
+    def test_too_soon_reply_never_reveals_counts_or_a_new_price(self):
+        deal = Deal(pace=(2, 4), rng=_Draws(4))
+        say = deal.concede("x")["say"]
+        self.assertIn(format_inr(LADDER_INR[0]), say)
+        self.assertNotIn(format_inr(LADDER_INR[1]), say)
+        for digit in "234":
+            self.assertNotIn(f" {digit} ", say)
+
+    def test_floor_still_holds_with_a_pace(self):
+        deal = Deal(pace=(2, 2), rng=_Draws(*([2] * 10)))
+        for _ in range(len(LADDER_INR) + 2):
+            self.pushes(deal, 2)
+            deal.concede("x", effort="high")
+        self.assertEqual(deal.price, FLOOR_INR)
+        self.assertTrue(deal.concede("x")["at_floor"])
+
+    def test_invalid_pace_is_refused(self):
+        for bad in ((0, 2), (3, 2)):
+            with self.assertRaises(ValueError):
+                Deal(pace=bad)
+
+
+class TestSpecialPrice(unittest.TestCase):
+    """Organizer override: server code sets it; no model tool can."""
+
+    def test_special_price_becomes_the_new_stone_wall(self):
+        deal = Deal(strict_ladder=True, pace=(2, 4))
+        deal.apply_special_price(13_00_000)
+        self.assertEqual(deal.price, 13_00_000)
+        self.assertTrue(deal.at_floor)
+        self.assertFalse(deal.concede("more", effort="high")["moved"])
+        self.assertEqual(deal.scoreboard()["cash_price"], 13_00_000)
+        self.assertEqual(deal.close(12_99_999)["status"], "rejected")
+        self.assertEqual(deal.close(13_00_000)["status"], "sold")
+        self.assertEqual(deal.scoreboard()["cash_price"], 13_00_000)
+
+    def test_special_price_replaces_an_earlier_handshake(self):
+        deal = Deal(strict_ladder=True)
+        deal.close(20_00_000)
+        deal.apply_special_price(13_00_000)
+        self.assertFalse(deal.sold)
+        self.assertEqual(deal.scoreboard()["cash_price"], 13_00_000)
+
+    def test_no_tool_schema_exposes_the_override(self):
+        self.assertNotIn("special", str(TOOL_SCHEMAS).lower())
+        with self.assertRaises(ValueError):
+            Deal().apply_special_price(0)
+
+
 class TestToolSchemas(unittest.TestCase):
+    def test_concede_price_takes_an_optional_effort_rating(self):
+        concede = next(s for s in TOOL_SCHEMAS if s["name"] == "concede_price")
+        self.assertEqual(concede["properties"]["effort"]["enum"], ["low", "medium", "high"])
+        self.assertEqual(concede["required"], ["reason"])
+
     def test_close_deal_takes_rupees(self):
         close = next(s for s in TOOL_SCHEMAS if s["name"] == "close_deal")
         self.assertIn("price_inr", close["properties"])

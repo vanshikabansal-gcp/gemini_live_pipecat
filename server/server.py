@@ -347,6 +347,7 @@ async def _run_challenge_socket(websocket: WebSocket, session_id: str) -> None:
             duration_s=CHALLENGE.duration_s,
             store=CHALLENGE.store,
             on_recorded=CHALLENGE.board.invalidate,
+            magic_words=getattr(CHALLENGE, "magic_words", ()),
         )
         run_agent_live = await asyncio.to_thread(load_pipeline, "gemini-live")
         # Backstop only: the round ends itself at duration_s. This bounds a
