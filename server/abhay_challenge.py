@@ -58,11 +58,12 @@ CHALLENGE_DEAL_RULES = (
     "RUPEES ONLY: every offer and every price is in Indian Rupees; amounts in lakh or crore are rupees. Do not accept, "
     "quote, or convert dollars, euros, pounds, dirhams, crypto, gold, or any other currency or barter. If the buyer "
     "names another currency, ask them to make the offer in rupees for this one car. Only a rupee price for one car counts. "
-    "PRICE PACE (overrides any earlier pacing guidance): Never lower the price the first time the buyer asks. On a first "
-    "push, hold the price with a witty, sarcastic dealer comeback and sweeten the deal with a free perk via include_extra "
-    "(at most one perk per reply, while perks last) instead of cash. After that, every time the buyer pushes AGAIN for a "
-    "lower price, call concede_price for exactly one step and rate their effort honestly: a specific, reasoned or witty "
-    "argument (market prices, timing, payment certainty, referrals, a trade-off) is high; plain haggling or a bare "
+    "PRICE PACE (overrides any earlier pacing guidance): Never lower the price the first time the buyer asks with a "
+    "plain or lazy push; on a lazy first ask, hold the price with a witty, sarcastic dealer comeback and sweeten the "
+    "deal with a free perk via include_extra (at most one perk per reply, while perks last) instead of cash. Every time "
+    "the buyer pushes for a lower price (including a creative first push), call concede_price for exactly one step and "
+    "rate their effort honestly: a creative, witty, or specific reasoned argument (clever angle, market prices, timing, "
+    "payment certainty, referrals, a trade-off) is high and unlocks a faster price drop; plain haggling or a bare "
     "counter-offer is medium; lazy, repetitive 'kam karo' is low. The showroom system, not you, decides "
     "whether the step is allowed, and the pace is random for every buyer and every step. If concede_price answers 'Too "
     "soon', keep the price, say no new number, and reply with a sarcastic line (plus a perk if one is left). If it gives "
@@ -74,9 +75,9 @@ CHALLENGE_DEAL_RULES = (
 )
 
 # Every price step in a round costs a fresh random number of buyer turns in
-# this range, nudged down for creative effort and up for lazy pushing, and
-# never below MIN_TURNS_PER_STEP (no drop on a single ask). Server-enforced in
-# persona_tools.negotiation.Deal; the prompt only shapes the performance.
+# this range, nudged down for creative effort (1-2 turns) and up for lazy
+# pushing (3-5 turns). Server-enforced in persona_tools.negotiation.Deal;
+# the prompt only shapes the performance.
 CONCESSION_PACE: Tuple[int, int] = (2, 4)
 MIN_TURNS_PER_STEP = 2
 
@@ -165,8 +166,8 @@ def normalize_player_id(value: Any) -> Optional[str]:
 
 
 def mask_player_id(player_id: str) -> str:
-    """``AB12CD34`` -> ``****CD34``. The only form of an ID the public board shows."""
-    return "****" + player_id[-4:]
+    """``AB12CD34`` -> ``********``. All 8 characters are hidden on the public board."""
+    return "*" * PLAYER_ID_LENGTH
 
 
 # Player-facing reasons a round cannot start. The page shows these verbatim.

@@ -26,7 +26,7 @@ test('startRound sends only the ID and language as JSON, and surfaces server err
   globalThis.window = { location: { protocol: 'https:', host: 'abhay.example.run.app' } };
   const calls = mockFetch(async () => ({ body: {
     ws_url: 'wss://abhay.example.run.app/ws?bot_type=gemini-live&session_id=s&connection_id=c',
-    session_id: 's', session_token: 't', duration_s: 120, player: '****CD34',
+    session_id: 's', session_token: 't', duration_s: 120, player: '********',
   } }));
   const ticket = await startRound('AB12CD34', 'hi-IN');
   assert.equal(calls[0].url, '/connect');
@@ -36,7 +36,7 @@ test('startRound sends only the ID and language as JSON, and surfaces server err
   assert.deepEqual(JSON.parse(calls[0].init.body), { player_id: 'AB12CD34', language: 'hi-IN' });
   assert.deepEqual(ticket, {
     wsUrl: 'wss://abhay.example.run.app/ws?bot_type=gemini-live&session_id=s&connection_id=c',
-    sessionId: 's', sessionToken: 't', durationS: 120, player: '****CD34',
+    sessionId: 's', sessionToken: 't', durationS: 120, player: '********',
   });
 
   mockFetch(async () => ({ status: 400, body: { detail: 'Enter an 8-character ID (letters and numbers only).' } }));
@@ -65,7 +65,7 @@ test('organizer token travels in a header, never the URL', async () => {
 
 test('finishRound authenticates with the session token and decodes the result', async () => {
   const calls = mockFetch(async () => ({ body: { result: {
-    reason: 'ended_by_player', player: '****CD34', price_inr: 1610000, extras_value_inr: 0, sold: false,
+    reason: 'ended_by_player', player: '********', price_inr: 1610000, extras_value_inr: 0, sold: false,
     recorded: true, not_recorded_reason: null, can_retry: false, rank: 4, total_players: 12,
   } } }));
   const result = await finishRound('s', 't');
@@ -76,7 +76,7 @@ test('finishRound authenticates with the session token and decodes the result', 
   assert.equal(result.can_retry, false);
 
   mockFetch(async () => ({ body: { result: {
-    reason: 'ended_by_player', player: '****CD34', price_inr: 2000000, extras_value_inr: 0, sold: false,
+    reason: 'ended_by_player', player: '********', price_inr: 2000000, extras_value_inr: 0, sold: false,
     recorded: false, not_recorded_reason: 'no_speech', can_retry: true, rank: null, total_players: null,
   } } }));
   const unscored = await finishRound('s', 't');

@@ -76,9 +76,9 @@ class TestPlayerIds(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.assertIsNone(ac.normalize_player_id(bad))
 
-    def test_mask_shows_only_the_last_four(self):
-        self.assertEqual(ac.mask_player_id("12345678"), "****5678")
-        self.assertEqual(ac.mask_player_id("AB12CD34"), "****CD34")
+    def test_mask_hides_all_eight_characters(self):
+        self.assertEqual(ac.mask_player_id("12345678"), "********")
+        self.assertEqual(ac.mask_player_id("AB12CD34"), "********")
 
     def test_claims_outlive_the_longest_possible_round(self):
         # server.py's backstop ends any round by duration + 90 s.
@@ -151,7 +151,7 @@ class TestScoring(unittest.TestCase):
             for i in range(5)
         ]
         public = ac.public_entries(entries)
-        self.assertEqual([row["player"] for row in public][:2], ["****0000", "****0001"])
+        self.assertEqual([row["player"] for row in public][:2], ["********", "********"])
         self.assertTrue(all("player_id" not in row for row in public))
         revealed = ac.public_entries(entries, reveal_top_n=3)
         self.assertEqual([row.get("player_id") for row in revealed],
@@ -618,15 +618,16 @@ class TestChallengeRun(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.ended.wait(), 2)
         state, result = self.sent
         self.assertEqual(state, {"type": "challenge_state", "status": "running", "duration_ms": 120_000,
-                                 "remaining_ms": 120_000, "player": "****CD34"})
+                                 "remaining_ms": 120_000, "player": "********"})
         self.assertEqual(result["type"], "challenge_result")
         self.assertEqual((result["reason"], result["price_inr"], result["extras_value_inr"]),
                          ("time_up", 1_525_000, 50_000))
         self.assertEqual((result["recorded"], result["rank"], result["total_players"], result["can_retry"],
                           result["not_recorded_reason"]), (True, 1, 1, False, None))
-        self.assertEqual(result["player"], "****CD34")
+        self.assertEqual(result["player"], "********")
         # The full ID and Abhay's floor never reach the client.
         self.assertNotIn(PLAYER, json.dumps(self.sent))
+        self.assertNotIn("CD34", json.dumps(self.sent))
         self.assertNotIn("1450000", json.dumps(self.sent))
         self.assertEqual(self.recorded_hook, 1)
         self.assertEqual(ac.recent_result("sess-1")["price_inr"], 1_525_000)
@@ -1037,8 +1038,9 @@ class TestChallengeHttp(ChallengeServerCase):
                                 voice="Puck", language="fr-FR")
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual((data["player"], data["duration_s"]), ("****CD34", 120))
+        self.assertEqual((data["player"], data["duration_s"]), ("********", 120))
         self.assertNotIn("AB12", response.text.upper())
+        self.assertNotIn("CD34", response.text.upper())
         url = urlparse(data["ws_url"])
         params = parse_qs(url.query)
         self.assertEqual(url.path, "/ws")
@@ -1122,9 +1124,10 @@ class TestChallengeHttp(ChallengeServerCase):
         self.assertEqual(body["total_players"], 5)
         self.assertEqual([row["price_inr"] for row in body["entries"]],
                          [1_450_000, 1_525_000, 1_610_000, 1_725_000, 1_875_000])
-        self.assertEqual(body["entries"][0]["player"], "****0001")
+        self.assertEqual(body["entries"][0]["player"], "********")
         self.assertTrue(all("player_id" not in row for row in body["entries"]))
         self.assertNotIn("9000000", response.text)
+        self.assertNotIn("0001", response.text)
         self.assertEqual(len(self.client.get("/api/challenge/leaderboard?limit=2").json()["entries"]), 2)
         for limit in (0, 31, "x"):
             self.assertEqual(self.client.get(f"/api/challenge/leaderboard?limit={limit}").status_code, 422)
@@ -1147,7 +1150,7 @@ class TestChallengeHttp(ChallengeServerCase):
         self.assertTrue(board["revealed"])
         self.assertEqual([row.get("player_id") for row in board["entries"]],
                          ["90000001", "90000004", "90000002", None, None])
-        self.assertEqual([row["player"] for row in board["entries"][:3]], ["****0001", "****0004", "****0002"])
+        self.assertEqual([row["player"] for row in board["entries"][:3]], ["********", "********", "********"])
 
     def test_organizer_login_is_rate_limited_and_can_be_disabled(self):
         for _ in range(5):

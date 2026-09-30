@@ -58,7 +58,7 @@ _LAKH_SHORTHAND_MAX = 1_000
 
 # Concession pace (optional, off by default). How the buyer has been pushing,
 # as judged by the seller, shifts how many buyer turns a price step costs.
-EFFORT_ADJUST: Dict[str, int] = {"low": 1, "medium": 0, "high": -1}
+EFFORT_ADJUST: Dict[str, int] = {"low": 1, "medium": 0, "high": -2}
 
 
 def _indian_grouping(value: int) -> str:
@@ -149,8 +149,9 @@ class Deal:
         # Concession pace. None (the default) means the model alone decides
         # when to concede. With pace=(lo, hi), every price step costs a fresh,
         # hidden, random number of buyer turns in [lo, hi], nudged by how hard
-        # and how creatively the buyer is pushing, and never fewer than
-        # min_turns_per_step: no price moves on a single ask.
+        # and how creatively the buyer is pushing. Ordinary or lazy pushes never
+        # need fewer than min_turns_per_step, while high (creative) effort can
+        # unlock a drop in as little as 1 turn.
         self._pace: Optional[Tuple[int, int]] = None
         self._min_turns = 1
         self._rng = rng or random.Random()
@@ -189,8 +190,10 @@ class Deal:
         """Buyer turns this step costs at the given effort. 0 when unpaced."""
         if self._pace is None:
             return 0
-        adjust = EFFORT_ADJUST.get(str(effort or "medium").strip().lower(), 0)
-        return max(self._min_turns, self._turns_needed + adjust)
+        eff = str(effort or "medium").strip().lower()
+        adjust = EFFORT_ADJUST.get(eff, 0)
+        effective_min = 1 if eff == "high" else self._min_turns
+        return max(effective_min, self._turns_needed + adjust)
 
     # -- organizer override --------------------------------------------------
 
@@ -512,9 +515,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "name": "concede_price",
         "description": (
             "Lower your asking price by exactly one approved step on the dealer ladder. You do NOT "
-            "choose the amount -- call this and quote the rupee price it returns. Call it ONLY after "
-            "sustained pushback or a credible walk-away threat, and only after you have already "
-            "pitched perks with include_extra. Never on the buyer's first lowball."
+            "choose the amount -- call this and quote the rupee price it returns. Call it when the "
+            "buyer gives a creative, witty, or well-reasoned argument, or after sustained pushback. "
+            "Never lower the price on a lazy 'kam karo' with no effort."
         ),
         "properties": {
             "reason": {
@@ -526,10 +529,11 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "enum": ["low", "medium", "high"],
                 "description": (
                     "How hard and how creatively the buyer has been pushing since your last price move. "
-                    "high = the buyer gave a specific, reasoned argument: competitor or market prices, model "
-                    "or timing logic, payment certainty, referrals or publicity, a trade-off, or genuine wit "
-                    "(most thoughtful pushes are high); medium = plain haggling, a bare counter-offer or a "
-                    "walk-away threat with no new reason; low = lazy, repetitive 'kam karo' with no argument."
+                    "high = the buyer gave a creative, witty, or specific well-reasoned argument: competitor "
+                    "or market prices, model or timing logic, payment certainty, referrals or publicity, a "
+                    "trade-off, or genuine humor (unlocks fast price cuts in 1-2 turns!); medium = plain "
+                    "haggling, a bare counter-offer or a walk-away threat with no new reason (takes 2-4 turns); "
+                    "low = lazy, repetitive 'kam karo' with no argument (takes 3-5 turns)."
                 ),
             },
         },

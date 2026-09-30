@@ -17,7 +17,7 @@ import {
   sanitizePlayerIdInput,
 } from '../src/challenge/challenge-logic.ts';
 
-test('player IDs: eight ASCII letters or digits, uppercased, masked to the last four', () => {
+test('player IDs: eight ASCII letters or digits, uppercased, masked across all eight characters', () => {
   assert.equal(sanitizePlayerIdInput('1234 5678'), '12345678');
   assert.equal(sanitizePlayerIdInput('ab12 cd34'), 'AB12CD34');
   assert.equal(sanitizePlayerIdInput('Ab-12_cD.34xyz'), 'AB12CD34');
@@ -34,8 +34,8 @@ test('player IDs: eight ASCII letters or digits, uppercased, masked to the last 
   assert.equal(isValidPlayerId('AB12CD345'), false);
   assert.equal(isValidPlayerId('AB12CD3-'), false);
   assert.equal(isValidPlayerId('AB12CD3Å'), false);
-  assert.equal(maskPlayerId('AB12CD34'), '****CD34');
-  assert.equal(maskPlayerId('12345678'), '****5678');
+  assert.equal(maskPlayerId('AB12CD34'), '********');
+  assert.equal(maskPlayerId('12345678'), '********');
 });
 
 test('prices use Indian grouping and the countdown never shows 0:00 early', () => {
@@ -56,15 +56,15 @@ test('prices use Indian grouping and the countdown never shows 0:00 early', () =
 test('server messages decode from RTVI server-message envelopes', () => {
   const wrap = data => ({ label: 'rtvi-ai', type: 'server-message', data });
   assert.deepEqual(
-    parseServerMessage(wrap({ type: 'challenge_state', status: 'running', duration_ms: 120000, remaining_ms: 119000, player: '****5678' })),
-    { type: 'challenge_state', status: 'running', duration_ms: 120000, remaining_ms: 119000, player: '****5678' },
+    parseServerMessage(wrap({ type: 'challenge_state', status: 'running', duration_ms: 120000, remaining_ms: 119000, player: '********' })),
+    { type: 'challenge_state', status: 'running', duration_ms: 120000, remaining_ms: 119000, player: '********' },
   );
   const result = parseServerMessage(wrap({
-    type: 'challenge_result', reason: 'time_up', player: '****CD34', price_inr: 1480000, extras_value_inr: 55000,
+    type: 'challenge_result', reason: 'time_up', player: '********', price_inr: 1480000, extras_value_inr: 55000,
     sold: false, recorded: true, not_recorded_reason: null, can_retry: false, rank: 2, total_players: 9,
   }));
   assert.deepEqual(result, {
-    type: 'challenge_result', reason: 'time_up', player: '****CD34', price_inr: 1480000, extras_value_inr: 55000,
+    type: 'challenge_result', reason: 'time_up', player: '********', price_inr: 1480000, extras_value_inr: 55000,
     sold: false, recorded: true, not_recorded_reason: null, can_retry: false, rank: 2, total_players: 9,
   });
   assert.equal(rankSummary(result), "You're #2 of 9 players");
@@ -138,8 +138,9 @@ test('result copy explains why a round is not on the board', () => {
   assert.equal(rankSummary({ recorded: false, rank: null }), null);
   assert.equal(rankSummary({ recorded: true, rank: null, total_players: null }), null);
   assert.equal(rankSummary({ recorded: true, rank: 1, total_players: null }), "You're #1 of 1 player");
+  assert.equal(isOwnRow({ player: '********' }, '********'), false);
   assert.equal(isOwnRow({ player: '****CD34' }, '****CD34'), true);
-  assert.equal(isOwnRow({ player: '****CD34' }, null), false);
+  assert.equal(isOwnRow({ player: '********' }, null), false);
 });
 
 test('the challenge sources never import the persona catalogue or studio session', () => {

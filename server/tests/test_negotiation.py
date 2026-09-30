@@ -224,15 +224,19 @@ class TestConcessionPace(unittest.TestCase):
         self.assertTrue(deal.concede("first ask")["moved"])
         self.assertEqual(deal.turns_required("low"), 0)
 
-    def test_never_drops_on_the_first_ask(self):
+    def test_never_drops_on_the_first_ask_for_ordinary_or_lazy_effort(self):
         deal = Deal(pace=(2, 4), rng=_Draws(2, 2))
         self.pushes(deal, 1)
-        for effort in ("low", "medium", "high"):
+        for effort in ("low", "medium"):
             result = deal.concede("one ask", effort=effort)
             self.assertFalse(result["moved"])
             self.assertTrue(result["too_soon"])
         self.assertEqual(deal.price, LADDER_INR[0])
-        self.assertEqual(deal.too_soon_attempts, 3)
+        self.assertEqual(deal.too_soon_attempts, 2)
+        # A creative (high-effort) argument can unlock a drop in 1-2 turns.
+        moved = deal.concede("creative pitch", effort="high")
+        self.assertTrue(moved["moved"])
+        self.assertEqual(deal.price, LADDER_INR[1])
 
     def test_step_needs_the_drawn_number_of_turns(self):
         deal = Deal(pace=(2, 4), rng=_Draws(3, 4, 2))
@@ -256,15 +260,19 @@ class TestConcessionPace(unittest.TestCase):
 
     def test_creative_effort_is_faster_and_lazy_effort_is_slower(self):
         deal = Deal(pace=(2, 4), rng=_Draws(3))
-        self.assertEqual(deal.turns_required("high"), 2)
+        self.assertEqual(deal.turns_required("high"), 1)
         self.assertEqual(deal.turns_required("medium"), 3)
         self.assertEqual(deal.turns_required("low"), 4)
         self.assertEqual(deal.turns_required(None), 3)
         self.assertEqual(deal.turns_required("nonsense"), 3)
+        deal_max = Deal(pace=(2, 4), rng=_Draws(4))
+        self.assertEqual(deal_max.turns_required("high"), 2)
 
     def test_effort_never_goes_below_the_minimum(self):
         deal = Deal(pace=(2, 4), min_turns_per_step=2, rng=_Draws(2))
-        self.assertEqual(deal.turns_required("high"), 2)
+        self.assertEqual(deal.turns_required("high"), 1)
+        self.assertEqual(deal.turns_required("medium"), 2)
+        self.assertEqual(deal.turns_required("low"), 3)
 
     def test_draws_use_the_configured_range(self):
         draws = _Draws(2, 3)
@@ -289,10 +297,11 @@ class TestConcessionPace(unittest.TestCase):
     def test_floor_still_holds_with_a_pace(self):
         deal = Deal(pace=(2, 2), rng=_Draws(*([2] * 10)))
         for _ in range(len(LADDER_INR) + 2):
-            self.pushes(deal, 2)
+            self.pushes(deal, 1)
             deal.concede("x", effort="high")
         self.assertEqual(deal.price, FLOOR_INR)
-        self.assertTrue(deal.concede("x")["at_floor"])
+        self.assertEqual(deal.price, 14_50_000)
+        self.assertTrue(deal.concede("x", effort="high")["at_floor"])
 
     def test_invalid_pace_is_refused(self):
         for bad in ((0, 2), (3, 2)):

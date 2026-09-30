@@ -112,9 +112,9 @@ export function isValidPlayerId(value: string): boolean {
   return new RegExp(`^[A-Z0-9]{${PLAYER_ID_LENGTH}}$`).test(value);
 }
 
-/** `AB12CD34` -> `****CD34`: the only form of an ID the UI shows once a round starts. */
-export function maskPlayerId(value: string): string {
-  return `****${value.slice(-4)}`;
+/** `AB12CD34` -> `********`: all 8 characters are hidden on the public board. */
+export function maskPlayerId(_value: string): string {
+  return "*".repeat(PLAYER_ID_LENGTH);
 }
 
 export function formatInr(amount: number): string {
@@ -251,8 +251,8 @@ export function rankSummary(result: ChallengeResultMessage): string | null {
   return `You're #${formatCount(result.rank)} of ${playersLabel(total)}`;
 }
 
-/** Board rows for this player's masked ID. Several players may share the last
- *  four characters, so this only highlights; it never identifies. */
+/** Board rows for this player's masked ID when the mask carries distinguishing
+ *  characters; an all-asterisk mask never matches every row on the board. */
 export function isOwnRow(entry: LeaderboardEntry, maskedPlayer: string | null): boolean {
-  return !!maskedPlayer && entry.player === maskedPlayer;
+  return !!maskedPlayer && !/^\*+$/.test(maskedPlayer) && entry.player === maskedPlayer;
 }

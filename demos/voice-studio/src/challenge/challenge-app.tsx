@@ -265,7 +265,7 @@ function LeaderboardPanel({ board, error, config, maskedPlayer, admin, onAdmin, 
       )}
 
       <footer className="ch-board-foot">
-        <span>IDs show only the last 4 characters.</span>
+        <span>All 8 characters of player IDs are hidden.</span>
         {board?.stale && <span className="ch-stale">Reconnecting…</span>}
       </footer>
 
@@ -769,7 +769,7 @@ function GameScreen({ config, board, boardError, refreshBoard, admin, setAdmin }
                 <li><Target aria-hidden="true" /> <strong>Your goal: get the price below {GOAL_PRICE_LABEL}.</strong> Abhay opens at ₹20 lakh and never drops on the first ask. Keep pushing, and get creative.</li>
                 <li><Timer aria-hidden="true" /> You get <strong>{formatCountdown(durationMs)}</strong> to negotiate by voice, for one car, in rupees.</li>
                 <li><Trophy aria-hidden="true" /> When time's up, Abhay's price at that moment goes on the board. Lowest price wins; more perks breaks a tie.</li>
-                <li><UserRound aria-hidden="true" /> Your ID shows as <strong>****</strong> plus its last 4 characters. Each ID gets one round, and its score is final.</li>
+                <li><UserRound aria-hidden="true" /> Your ID is hidden as <strong>********</strong> on the public board. Each ID gets one round, and its score is final.</li>
               </ul>
 
               <label className="ch-field-label" htmlFor="ch-player-id">Your {PLAYER_ID_LENGTH}-character ID</label>
