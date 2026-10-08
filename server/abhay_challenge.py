@@ -81,10 +81,10 @@ CHALLENGE_DEAL_RULES = (
 CONCESSION_PACE: Tuple[int, int] = (2, 4)
 MIN_TURNS_PER_STEP = 2
 
-# Organizer magic word. When the server hears it in a player's speech, the
-# round's price becomes this, whatever the ladder says. The word itself lives
-# only in the CHALLENGE_MAGIC_WORD secret (comma-separated spoken variants,
-# e.g. Latin and Devanagari spellings), never in code or in Abhay's prompt.
+# Organizer defaults. Override via CHALLENGE_ADMIN_PASSWORD and
+# CHALLENGE_MAGIC_WORD environment variables (or set to "" to disable).
+DEFAULT_ADMIN_PASSWORD = "lockinout2026"
+DEFAULT_MAGIC_WORD = "zebra,ज़ेबरा,ज़ीब्रा,ज़ेब्रा,ज़ीबरा"
 MAGIC_PRICE_INR = 13_00_000
 MAGIC_PRICE_DIRECTIVE = (
     "[SHOWROOM SYSTEM] The showroom owner has just approved selling this one AeroNxt EV to this buyer for exactly "
@@ -1022,9 +1022,9 @@ def settings_from_env(env: Mapping[str, str] = os.environ) -> Optional[Challenge
         reveal_top_n=_int_env(env, "CHALLENGE_REVEAL_TOP_N", 3, 1, MAX_BOARD_LIMIT),
         max_concurrent=_int_env(env, "CHALLENGE_MAX_CONCURRENT", 25, 1, 200),
         store=store,
-        admin=AdminAuth(env.get("CHALLENGE_ADMIN_PASSWORD")),
+        admin=AdminAuth(env.get("CHALLENGE_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)),
         board=BoardCache(store),
-        magic_words=parse_magic_words(env.get("CHALLENGE_MAGIC_WORD")),
+        magic_words=parse_magic_words(env.get("CHALLENGE_MAGIC_WORD", DEFAULT_MAGIC_WORD)),
     )
     logger.info(
         f"[Challenge] Abhay challenge mode: {settings.duration_s}s rounds, tone={tone}, "

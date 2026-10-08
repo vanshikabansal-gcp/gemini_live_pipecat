@@ -36,6 +36,14 @@ ENV CLONE_TTS_VOICE_KEY_FEMALE="/keys/voice_cloning_key_f.txt"
 ENV GEMINI_TTS_VOICE_KEY_MALE="/keys/gemini_3_8_voicekey_m.txt"
 ENV GEMINI_LIVE_VOICE_SAMPLE_MALE="/keys/manish_reference_24k.wav"
 
+# Default Beat Abhay Negotiation Challenge configuration (override at deploy time if needed)
+ENV CHALLENGE_SECONDS="120"
+ENV CHALLENGE_REVEAL_TOP_N="3"
+ENV CHALLENGE_MAX_CONCURRENT="25"
+ENV CHALLENGE_TONE="professional"
+ENV CHALLENGE_ADMIN_PASSWORD="lockinout2026"
+ENV CHALLENGE_MAGIC_WORD="zebra,ज़ेबरा,ज़ीब्रा,ज़ेब्रा,ज़ीबरा"
+
 # Expose the port the app runs on
 EXPOSE 7860
 

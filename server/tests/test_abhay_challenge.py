@@ -510,7 +510,9 @@ class TestSettings(unittest.TestCase):
         self.assertEqual((settings.duration_s, settings.reveal_top_n, settings.max_concurrent, settings.tone),
                          (120, 3, 25, "professional"))
         self.assertEqual(settings.store.backend, "memory")
-        self.assertFalse(settings.admin.enabled)
+        self.assertTrue(settings.admin.enabled)
+        self.assertTrue(settings.admin.check_password(ac.DEFAULT_ADMIN_PASSWORD))
+        self.assertFalse(ac.settings_from_env({"APP_MODE": "abhay-challenge", "CHALLENGE_ADMIN_PASSWORD": ""}).admin.enabled)
 
     def test_values_are_clamped_and_validated(self):
         settings = ac.settings_from_env({
@@ -880,9 +882,13 @@ class TestMagicWord(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(ac.says_magic_word(said, self.WORDS))
         self.assertFalse(ac.says_magic_word("giraffe", ()))
 
-    def test_settings_read_the_secret_and_default_off(self):
+    def test_settings_read_the_secret_and_default_to_zebra(self):
         base = {"APP_MODE": "abhay-challenge", "LEADERBOARD_BACKEND": "memory"}
-        self.assertEqual(ac.settings_from_env(base).magic_words, ())
+        default_settings = ac.settings_from_env(base)
+        self.assertEqual(default_settings.magic_words, ac.parse_magic_words(ac.DEFAULT_MAGIC_WORD))
+        self.assertTrue(ac.says_magic_word("Abhay bhai zebra!", default_settings.magic_words))
+        self.assertTrue(ac.says_magic_word("ज़ेबरा बोलो", default_settings.magic_words))
+        self.assertEqual(ac.settings_from_env({**base, "CHALLENGE_MAGIC_WORD": ""}).magic_words, ())
         on = ac.settings_from_env({**base, "CHALLENGE_MAGIC_WORD": "giraffe,जिराफ"})
         self.assertEqual(on.magic_words, ("giraffe", "जिराफ"))
         self.assertNotIn("giraffe", repr(on))
