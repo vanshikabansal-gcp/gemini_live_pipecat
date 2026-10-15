@@ -173,7 +173,10 @@ def clear_diagnostic_logs(session_id=None):
 
 def install_log_capture():
     """Preserve raw diagnostic logs; this sink never derives metrics from text."""
-    from loguru import logger
+    try:
+        from loguru import logger
+    except ImportError:
+        return None
     def capture(message):
         record = message.record
         append_raw_log_entry(record["message"], record["level"].name)

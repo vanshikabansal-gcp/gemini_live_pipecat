@@ -31,6 +31,12 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 from persona_identity import PERSONA_ALIASES, normalize_persona_id
 
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 class ArchitecturePattern(str, Enum):
     """The prompt/tooling strategy a persona runs under."""
@@ -45,6 +51,8 @@ class ArchitecturePattern(str, Enum):
     JIT_MF_ADVISOR = "jit_mf_advisor"
     #: Kavya's Cymbal Smartglasses companion with 14 mock smartglasses tools.
     GLASS_BUDDY = "glass_buddy"
+    #: Riya's Asian Paints Beautiful Homes Painting Service (BHPS) with SF API, qualification, and booking tools.
+    JIT_BHPS_ADVISOR = "jit_bhps_advisor"
 
 
 class PersonaConfig(NamedTuple):
@@ -80,6 +88,12 @@ PERSONA_REGISTRY: Dict[str, PersonaConfig] = {
     "ananya-advisor": PersonaConfig(
         persona_id="ananya-advisor",
         architecture=ArchitecturePattern.JIT_MF_ADVISOR,
+        is_ui_editable=False,
+    ),
+    # Riya - Asian Paints Beautiful Homes Painting Service (BHPS + BH Store + Sleek + JIT phase cards)
+    "asian-paints": PersonaConfig(
+        persona_id="asian-paints",
+        architecture=ArchitecturePattern.JIT_BHPS_ADVISOR,
         is_ui_editable=False,
     ),
     "storyteller": PersonaConfig("storyteller", ArchitecturePattern.MONOLITHIC_STATIC),
@@ -339,7 +353,6 @@ class JITPhaseCardsArchitecture(BasePersonaArchitecture):
             try:
                 await self._phase_broadcast(payload)
             except Exception as exc:
-                from loguru import logger
                 logger.warning(f"[Pragya] UI event failed: {exc}")
 
     async def _broadcast_phase(self, card_pushed: bool) -> None:
@@ -367,7 +380,6 @@ class JITPhaseCardsArchitecture(BasePersonaArchitecture):
         )
 
     async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        from loguru import logger
         from persona_prompt_cards.pragya_cards import PRAGYA_SUPERCAR_CARDS, format_supercar_prompt_card
 
         phase_id = args.get("phase_id")
@@ -522,7 +534,6 @@ class JITPhaseCardsArchitecture(BasePersonaArchitecture):
 async def _deliver_phase_card(architecture, card, formatter, label):
     """Commit the active phase only after the provider accepts its context card."""
     from diagnostic_buffer import current_session_id
-    from loguru import logger
     if architecture._last_card_key == card.phase_id:
         return {"status": "success", "phase_id": card.phase_id, "delivery_status": "already_sent"}
     delivered = False
@@ -542,12 +553,14 @@ async def _deliver_phase_card(architecture, card, formatter, label):
     phase_id = architecture.engine.active_phase
     if architecture._broadcast:
         try:
+            slots = getattr(architecture.engine, "slots", None)
             await architecture._broadcast({
                 "type": "phase_transition", "phase_id": phase_id,
                 "requested_phase_id": card.phase_id, "title": card.title if delivered else "Card delivery failed",
                 "session_id": current_session_id(), "revision": architecture._phase_event_revision,
                 "card_pushed": delivered, "delivery_status": "sent" if delivered else "failed",
                 "reason": "model selected phase" if delivered else "card delivery failed; phase unchanged",
+                **( {"slots": dict(slots)} if isinstance(slots, dict) else {} ),
             })
         except Exception as exc:
             logger.warning(f"[{label}] UI event failed: {exc}")
@@ -611,7 +624,6 @@ class AnanyaMFAdvisorArchitecture(BasePersonaArchitecture):
         return standard_function_schemas(tools)
 
     async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        from loguru import logger
         from persona_prompt_cards.ananya_cards import (
             get_ananya_phase_card,
             format_ananya_prompt_card,
@@ -715,7 +727,6 @@ class KavyaGlassBuddyArchitecture(BasePersonaArchitecture):
         return standard_function_schemas([*ALL_GLASS_BUDDY_TOOL_SCHEMAS, switch_phase_schema])
 
     async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        from loguru import logger
         from persona_prompt_cards.kavya_cards import (
             get_kavya_phase_card,
             format_kavya_prompt_card,
@@ -777,12 +788,153 @@ class KavyaGlassBuddyArchitecture(BasePersonaArchitecture):
         return registered
 
 
+class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
+    """Riya: Asian Paints Beautiful Homes Painting Service (BHPS), BH Store & Sleek Advisor.
+
+    Manages pincode serviceability, painting/civil/timeline qualification, and site visit /
+    BH Store / Sleek Kitchen registrations with Header + Directive + Footer JIT phase cards.
+    """
+
+    pattern = ArchitecturePattern.JIT_BHPS_ADVISOR
+    model_controls_conversation = True
+
+    def __init__(self) -> None:
+        self._llm = None
+        self._broadcast = None
+        self._card_lock = asyncio.Lock()
+        self._last_card_key = None
+        self._engine = None
+        self._pending_card_args: Optional[Dict[str, Any]] = None
+
+    async def flush_pending_card(self) -> None:
+        if self._pending_card_args is not None:
+            args = self._pending_card_args
+            self._pending_card_args = None
+            async with self._card_lock:
+                await self._switch_phase(args)
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            from persona_tools.bhps_advisor import BHPSExecutionEngine
+            self._engine = BHPSExecutionEngine(broadcast=self._broadcast)
+        return self._engine
+
+    def has_exclusive_tools(self, engine: str = "live") -> bool:
+        return True
+
+    def compose_system_prompt(self, system_instruction: Optional[str], engine: str = "live") -> Optional[str]:
+        from persona_prompt_cards.bhps_cards import (
+            get_bhps_monolithic_system_instruction,
+            get_bhps_root_system_instruction,
+        )
+        if engine == "cascade":
+            return get_bhps_monolithic_system_instruction()
+        return get_bhps_root_system_instruction()
+
+    def get_tool_schemas(self, engine: str = "live") -> List[Any]:
+        from persona_tools.bhps_advisor import (
+            check_pincode_serviceability_schema,
+            record_painting_qualification_schema,
+            book_bhps_action_schema,
+            switch_phase_schema,
+        )
+        tools = [
+            check_pincode_serviceability_schema,
+            record_painting_qualification_schema,
+            book_bhps_action_schema,
+        ]
+        if engine != "cascade":
+            tools.append(switch_phase_schema)
+        return standard_function_schemas(tools)
+
+    async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        from persona_prompt_cards.bhps_cards import (
+            get_bhps_phase_card,
+            format_bhps_prompt_card,
+        )
+
+        phase_id = args.get("phase_id", "")
+        card = get_bhps_phase_card(phase_id)
+        if not card:
+            return {"status": "invalid_phase", "message": f"Unknown phase {phase_id}"}
+
+        slots = dict(getattr(self.engine, "slots", {}) or {})
+        return await _deliver_phase_card(
+            self,
+            card,
+            lambda c: format_bhps_prompt_card(c, state=slots),
+            "Riya",
+        )
+
+    def register_handlers(self, llm: Any, broadcast=None, engine: str = "live") -> List[str]:
+        self._llm = llm
+        self._broadcast = broadcast
+        if self._engine:
+            self._engine._broadcast = broadcast
+
+        registered = []
+        if engine != "cascade":
+            async def handle_switch_phase(params):
+                async with self._card_lock:
+                    result = await self._switch_phase(params.arguments or {})
+                await params.result_callback(result)
+            llm.register_function("switch_phase", handle_switch_phase)
+            registered.append("switch_phase")
+
+        async def handle_check_pincode_serviceability(params):
+            async with self._card_lock:
+                result = await self.engine.check_pincode_serviceability(params.arguments or {})
+                # If BHPS-only pincode (neither BH Store nor Sleek available), auto-advance to SOP_02
+                if (
+                    engine != "cascade"
+                    and result.get("serviceable") is True
+                    and not result.get("bh_store_available")
+                    and not result.get("sleek_kitchen_available")
+                ):
+                    await self._switch_phase({"phase_id": "SOP_02_SCOPE_QUALIFICATION"})
+            await params.result_callback(result)
+
+        async def handle_record_painting_qualification(params):
+            async with self._card_lock:
+                args = params.arguments or {}
+                result = await self.engine.record_painting_qualification(args)
+                if engine != "cascade":
+                    next_inst = str(result.get("next_script_instruction", ""))
+                    scope = str(args.get("painting_scope", "")).lower()
+                    if "SOP_04_VISIT_BOOKING" in next_inst:
+                        await self._switch_phase({"phase_id": "SOP_04_VISIT_BOOKING"})
+                    elif scope in ("bh_store_interiors", "sleek_kitchen_wardrobe"):
+                        await self._switch_phase({"phase_id": "SOP_03_INTERIORS_OR_SLEEK"})
+                    elif self.engine.active_phase == "SOP_01_PINCODE_SERVICEABILITY":
+                        await self._switch_phase({"phase_id": "SOP_02_SCOPE_QUALIFICATION"})
+            await params.result_callback(result)
+
+        async def handle_book_bhps_action(params):
+            async with self._card_lock:
+                args = params.arguments or {}
+                result = await self.engine.book_bhps_action(args)
+                if engine != "cascade" and args.get("action_type") != "schedule_callback":
+                    await self._switch_phase({"phase_id": "SOP_04_VISIT_BOOKING"})
+            await params.result_callback(result)
+
+        llm.register_function("check_pincode_serviceability", handle_check_pincode_serviceability)
+        registered.append("check_pincode_serviceability")
+        llm.register_function("record_painting_qualification", handle_record_painting_qualification)
+        registered.append("record_painting_qualification")
+        llm.register_function("book_bhps_action", handle_book_bhps_action)
+        registered.append("book_bhps_action")
+
+        return registered
+
+
 _ARCHITECTURE_IMPLEMENTATIONS = {
     ArchitecturePattern.MONOLITHIC_STATIC: MonolithicArchitecture,
     ArchitecturePattern.STATE_LADDER_NEGOTIATOR: NegotiatorLadderArchitecture,
     ArchitecturePattern.JIT_PHASE_CARDS: JITPhaseCardsArchitecture,
     ArchitecturePattern.JIT_MF_ADVISOR: AnanyaMFAdvisorArchitecture,
     ArchitecturePattern.GLASS_BUDDY: KavyaGlassBuddyArchitecture,
+    ArchitecturePattern.JIT_BHPS_ADVISOR: AsianPaintsBHPSArchitecture,
 }
 
 

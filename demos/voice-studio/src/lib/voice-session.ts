@@ -310,6 +310,27 @@ export const PERSONA_VOICE_DESIGN_MAP: Record<string, PersonaVoiceDesign> = {
     ttsPitch: "Default",
     ttsVoicePrompt: "Friendly smart-glasses AI companion. Crisp, upbeat, and helpful.",
   },
+  "asian-paints": {
+    ttsStyle: "Warm & Friendly",
+    ttsPaceLabel: "Natural",
+    ttsAccent: "Indian",
+    ttsPitch: "Default",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+  },
+  bhps: {
+    ttsStyle: "Warm & Friendly",
+    ttsPaceLabel: "Natural",
+    ttsAccent: "Indian",
+    ttsPitch: "Default",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+  },
+  riya: {
+    ttsStyle: "Warm & Friendly",
+    ttsPaceLabel: "Natural",
+    ttsAccent: "Indian",
+    ttsPitch: "Default",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+  },
 };
 
 export function getPersonaVoiceDesign(personaId: string): PersonaVoiceDesign {

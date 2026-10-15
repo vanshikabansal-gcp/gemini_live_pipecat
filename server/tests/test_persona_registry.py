@@ -82,6 +82,9 @@ class TestPersonaRegistry(unittest.TestCase):
             "reservation-agent": ArchitecturePattern.GLASS_BUDDY,
             "abhay": ArchitecturePattern.STATE_LADDER_NEGOTIATOR,
             "ranvir": ArchitecturePattern.STATE_LADDER_NEGOTIATOR,
+            "asian-paints": ArchitecturePattern.JIT_BHPS_ADVISOR,
+            "bhps": ArchitecturePattern.JIT_BHPS_ADVISOR,
+            "riya": ArchitecturePattern.JIT_BHPS_ADVISOR,
         }
         for alias, pattern in expected.items():
             with self.subTest(alias=alias):

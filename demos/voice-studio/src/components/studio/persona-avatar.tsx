@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, Car, Coffee, Heart, Landmark, SlidersHorizontal, TrendingUp, Wallet } from "lucide-react";
+import { BookOpen, Car, Coffee, Heart, Landmark, Paintbrush, SlidersHorizontal, TrendingUp, Wallet } from "lucide-react";
 import type { Persona } from "@/lib/personas";
 
 const icons = {
@@ -10,6 +10,7 @@ const icons = {
   "car-negotiator": Car,
   "groww-advisor": TrendingUp,
   "lamborghini-concierge": Landmark,
+  "asian-paints": Paintbrush,
   custom: SlidersHorizontal,
 };
 

@@ -1,13 +1,20 @@
 import unittest
 from unittest.mock import AsyncMock
 from diagnostic_buffer import bind_session
-from persona_registry import AnanyaMFAdvisorArchitecture, KavyaGlassBuddyArchitecture
+from persona_registry import (
+    AnanyaMFAdvisorArchitecture,
+    AsianPaintsBHPSArchitecture,
+    KavyaGlassBuddyArchitecture,
+)
 
 
 class TestPhaseDelivery(unittest.IsolatedAsyncioTestCase):
     async def test_both_personas_retry_failed_delivery(self):
-        for factory, target in [(AnanyaMFAdvisorArchitecture, "SOP_02_SCHEME_DETAILS"),
-                                (KavyaGlassBuddyArchitecture, "SOP_02_VISION_CAPTURE")]:
+        for factory, target in [
+            (AnanyaMFAdvisorArchitecture, "SOP_02_SCHEME_DETAILS"),
+            (KavyaGlassBuddyArchitecture, "SOP_02_VISION_CAPTURE"),
+            (AsianPaintsBHPSArchitecture, "SOP_02_SCOPE_QUALIFICATION"),
+        ]:
             bind_session("phase-session")
             arch = factory()
             arch._llm = AsyncMock()

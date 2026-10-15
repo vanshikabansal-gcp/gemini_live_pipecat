@@ -18,6 +18,9 @@ PERSONA_ALIASES = {
     "meera": "debt-collector",
     "kabir": "storyteller",
     "aisha": "ai-companion",
+    "riya": "asian-paints",
+    "bhps": "asian-paints",
+    "asian-paints-bhps": "asian-paints",
 }
 
 
@@ -84,6 +87,14 @@ PERSONA_VOICE_DESIGN_DEFAULTS: dict[str, dict[str, str]] = {
         "accent": "Indian",
         "pitch": "Default",
         "prompt": "Friendly smart-glasses AI companion. Crisp, upbeat, and helpful.",
+    },
+    "asian-paints": {
+        "voice": "Aoede",
+        "style": "Warm & Friendly",
+        "pace": "Natural",
+        "accent": "Indian",
+        "pitch": "Default",
+        "prompt": "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
     },
 }
 

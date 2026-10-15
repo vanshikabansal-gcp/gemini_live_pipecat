@@ -120,6 +120,43 @@ class TestPersonaPromptCards(unittest.TestCase):
             self.assertNotIn("AjnaLens", c.directive)
             self.assertNotIn("Ajna", c.directive)
 
+    def test_asian_paints_bhps_cards_and_script_coverage(self):
+        card1 = get_persona_card("asian-paints", "SOP_01_PINCODE_SERVICEABILITY")
+        self.assertIsNotNone(card1)
+        self.assertEqual(card1.phase_id, "SOP_01_PINCODE_SERVICEABILITY")
+
+        # Alias lookup
+        card2 = get_persona_card("bhps", "qualification")
+        self.assertEqual(card2.phase_id, "SOP_02_SCOPE_QUALIFICATION")
+
+        card3 = get_persona_card("riya", "sleek")
+        self.assertEqual(card3.phase_id, "SOP_03_INTERIORS_OR_SLEEK")
+
+        card4 = get_persona_card("asian-paints", "booking")
+        self.assertEqual(card4.phase_id, "SOP_04_VISIT_BOOKING")
+
+        all_cards = get_persona_all_cards("asian-paints")
+        self.assertEqual(
+            set(all_cards.keys()),
+            {
+                "SOP_01_PINCODE_SERVICEABILITY",
+                "SOP_02_SCOPE_QUALIFICATION",
+                "SOP_03_INTERIORS_OR_SLEEK",
+                "SOP_04_VISIT_BOOKING",
+            },
+        )
+
+        root = get_persona_system_instruction("asian-paints", engine="live")
+        self.assertIn("Asian Paints Beautiful Homes Painting Service", root)
+        self.assertIn("INDIAN ACCENT", root)
+        self.assertIn("check_pincode_serviceability", root)
+        self.assertIn("switch_phase", root)
+
+        monolithic = get_persona_system_instruction("asian-paints", engine="cascade")
+        self.assertIn("Asian Paints Beautiful Homes Painting Service", monolithic)
+        self.assertIn("Highlightation Texture", monolithic)
+        self.assertIn("verification code", monolithic)
+
     def test_static_persona_instructions(self):
         abhay_inst = get_persona_system_instruction("car-negotiator")
         self.assertIn("Abhay", abhay_inst)

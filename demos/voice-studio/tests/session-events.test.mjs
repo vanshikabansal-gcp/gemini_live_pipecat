@@ -191,6 +191,7 @@ test('current topic can return to cars while booking and visited milestones rema
 for (const [personaId, initial, target] of [
   ['groww-advisor', 'SOP_01_OVERVIEW', 'SOP_02_SCHEME_DETAILS'],
   ['reservation-agent', 'SOP_01_COMPANION_READY', 'SOP_02_VISION_CAPTURE'],
+  ['asian-paints', 'SOP_01_PINCODE_SERVICEABILITY', 'SOP_02_SCOPE_QUALIFICATION'],
 ]) test(`${personaId} commits only delivered phases for the current session`, async () => {
   const h = await harness();
   h.render().choosePersona(personaId);

@@ -50,6 +50,11 @@ VOICE_NOTES: dict[str, str] = {
         "KAVYA'S VOICE: [[upbeat friendly, bright pitch, brisk]] with a quick <chuckle>; instructions go "
         "[[focused, level pitch, crisp]]. Keep sounds light: <breath> and <short pause>, no <cough> or <sneeze>."
     ),
+    "asian-paints": (
+        "RIYA'S VOICE: [[warm polite Indian customer care, pleasant mid pitch, natural]], with a full Indian accent "
+        "and gentle <breath> or <short pause> before reading pincodes or reference IDs. Stay warm, respectful, and "
+        "polished: no <cough>, <sneeze> or <yawn>."
+    ),
 }
 
 VOICE_NOTES["mf-advisor"] = VOICE_NOTES["ananya-advisor"]  # legacy id, mirrors persona_identity
