@@ -2,7 +2,18 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { diagnosticHeaders } from "@/lib/session-diagnostics";
-import { totalIn, totalOut, type TokenSplit } from "@/lib/pricing";
+import {
+  EMPTY_TOKEN_SPLIT,
+  LIVE_RATE_CARDS,
+  accumulateSplit,
+  formatCost,
+  getLiveRateCard,
+  totalIn,
+  totalOut,
+  type TokenSplit,
+  type UsageTokenData,
+} from "@/lib/pricing";
+import { stageLabel, type CascadeCost } from "@/lib/cascade-cost";
 import {
   X,
   Trash2,
@@ -41,6 +52,8 @@ type LatencySummary = {
   stt?: LatencyStat;
   tts?: LatencyStat;
   vad_stop_to_first_server_audio?: LatencyStat;
+  provider_usage?: UsageTokenData;
+  cascade_cost?: CascadeCost | null;
   turns?: any[];
 };
 
@@ -62,10 +75,12 @@ type ObservabilityDrawerProps = {
    */
   sessionId?: string;
   engine?: "live" | "cascade";
+  model?: string;
   sessionTurnCount?: number;
   sessionTokens?: number;
   sessionTokenSplit?: TokenSplit;
   sessionCost?: number;
+  cascadeCost?: CascadeCost | null;
   sessionInterrupts?: number;
 };
 
@@ -75,10 +90,12 @@ export default function ObservabilityDrawer({
   backendUrl,
   sessionId,
   engine = "live",
+  model = "gemini-3.8-live",
   sessionTurnCount,
   sessionTokens,
   sessionTokenSplit,
   sessionCost,
+  cascadeCost,
   sessionInterrupts,
 }: ObservabilityDrawerProps) {
   const scope = sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : "";
@@ -167,7 +184,8 @@ export default function ObservabilityDrawer({
     const turns = latencySummary?.turns?.filter(r => r.stage === "turn" && r.turn_id > 0).length ?? 0;
     const interrupts = latencySummary?.turns?.filter(r => r.stage === "turn" && r.status === "interrupted").length ?? 0;
     const tools = logs.filter(log => log.event_type === "Tool Output").length;
-    const totalTokens = 0, inTokens = 0, outTokens = 0;
+    const providerUsage = latencySummary?.provider_usage;
+    const backendTotalTokens = providerUsage?.total_token_count ?? 0;
 
     const totalStat = latencySummary?.vad_stop_to_first_server_audio || { count: 0 };
     const llmStat = latencySummary?.llm || { count: 0 };
@@ -177,7 +195,7 @@ export default function ObservabilityDrawer({
 
     // Prefer exact session values tracked directly in client session state
     const displayTurns =
-      sessionTurnCount !== undefined
+      sessionTurnCount !== undefined && sessionTurnCount > 0
         ? sessionTurnCount
         : turns > 0
           ? turns
@@ -189,11 +207,48 @@ export default function ObservabilityDrawer({
       sessionInterrupts !== undefined ? sessionInterrupts : interrupts;
 
     const displayTokens =
-      sessionTokens !== undefined ? sessionTokens : totalTokens;
+      sessionTokens !== undefined && sessionTokens > 0
+        ? sessionTokens
+        : backendTotalTokens;
+
+    const clientSplitTotal = sessionTokenSplit ? totalIn(sessionTokenSplit) + totalOut(sessionTokenSplit) : 0;
+    const effectiveSplit: TokenSplit =
+      clientSplitTotal > 0 && sessionTokenSplit
+        ? sessionTokenSplit
+        : providerUsage
+          ? accumulateSplit(EMPTY_TOKEN_SPLIT, providerUsage)
+          : EMPTY_TOKEN_SPLIT;
 
     // Token totals come from provider usage, never formatted log text.
-    const displayIn = sessionTokenSplit ? totalIn(sessionTokenSplit) : inTokens;
-    const displayOut = sessionTokenSplit ? totalOut(sessionTokenSplit) : outTokens;
+    const displayIn = totalIn(effectiveSplit) || (providerUsage?.prompt_token_count ?? 0);
+    const displayOut = totalOut(effectiveSplit) || (providerUsage?.response_token_count ?? 0);
+
+    const rateCard = getLiveRateCard(model || "gemini-3.8-live") || LIVE_RATE_CARDS["gemini-3.8"];
+    const audioInTokens = effectiveSplit.audioIn;
+    const textInTokens = effectiveSplit.textIn + effectiveSplit.residualIn;
+    const audioOutTokens = effectiveSplit.audioOut + effectiveSplit.residualOut;
+    const textOutTokens = effectiveSplit.textOut;
+
+    const audioInUSD = (audioInTokens * rateCard.audioInPerMillion) / 1_000_000;
+    const textInUSD = (textInTokens * rateCard.textInPerMillion) / 1_000_000;
+    const audioOutUSD = (audioOutTokens * rateCard.audioOutPerMillion) / 1_000_000;
+    const textOutUSD = (textOutTokens * rateCard.textOutPerMillion) / 1_000_000;
+    const computedLiveCostUSD = audioInUSD + textInUSD + audioOutUSD + textOutUSD;
+
+    const activeCascadeCost = cascadeCost || latencySummary?.cascade_cost || null;
+    const cascadeKnownUSD = activeCascadeCost ? Number(activeCascadeCost.known_usd || 0) : 0;
+
+    const costUSD =
+      engine === "cascade"
+        ? cascadeKnownUSD > 0
+          ? cascadeKnownUSD
+          : sessionCost || 0
+        : sessionCost && sessionCost > 0
+          ? sessionCost
+          : computedLiveCostUSD;
+
+    const costINR = costUSD * 86.5;
+    const avgCostPerTurnUSD = displayTurns > 0 ? costUSD / displayTurns : 0;
 
     return {
       turns: displayTurns,
@@ -202,13 +257,38 @@ export default function ObservabilityDrawer({
       totalTokens: displayTokens,
       inTokens: displayIn,
       outTokens: displayOut,
+      effectiveSplit,
+      rateCard,
+      audioInTokens,
+      textInTokens,
+      audioOutTokens,
+      textOutTokens,
+      audioInUSD,
+      textInUSD,
+      audioOutUSD,
+      textOutUSD,
+      costUSD,
+      costINR,
+      avgCostPerTurnUSD,
+      activeCascadeCost,
       totalStat,
       llmStat,
       sttStat,
       ttsStat,
       liveStat,
     };
-  }, [logs, latencySummary, sessionTurnCount, sessionInterrupts, sessionTokens, sessionTokenSplit, engine]);
+  }, [
+    logs,
+    latencySummary,
+    sessionTurnCount,
+    sessionInterrupts,
+    sessionTokens,
+    sessionTokenSplit,
+    sessionCost,
+    cascadeCost,
+    engine,
+    model,
+  ]);
 
   // Derived status tag: "Waiting for session" / "Updating" / "Telemetry unavailable"
   const statusState = useMemo(() => {
@@ -425,6 +505,140 @@ export default function ObservabilityDrawer({
                 <span className="kpi-sub">
                   In: {aggregatedMetrics.inTokens.toLocaleString()} | Out: {aggregatedMetrics.outTokens.toLocaleString()}
                 </span>
+              </div>
+              <div
+                className="obs-kpi-card"
+                style={{
+                  borderColor: "rgba(74, 222, 128, 0.28)",
+                  background: "rgba(74, 222, 128, 0.05)",
+                }}
+              >
+                <span className="kpi-label" style={{ color: "#4ade80" }}>
+                  Call Cost
+                </span>
+                <span className="kpi-value" style={{ color: "#4ade80" }}>
+                  {formatCost(aggregatedMetrics.costUSD)}
+                </span>
+                <span className="kpi-sub" title="Estimated public list-price cost in USD & INR (₹86.50/$)">
+                  ≈ ₹{aggregatedMetrics.costINR.toFixed(4)}
+                  {aggregatedMetrics.turns > 0
+                    ? ` · ${formatCost(aggregatedMetrics.avgCostPerTurnUSD)}/turn`
+                    : ""}
+                </span>
+              </div>
+            </div>
+
+            {/* Session Cost & Token Billing Breakdown */}
+            <div className="obs-table-section">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "10px",
+                  flexWrap: "wrap",
+                  gap: "8px",
+                }}
+              >
+                <h3 style={{ margin: 0 }}>Session Cost & Token Billing Breakdown</h3>
+                <span className="spotlight-count" style={{ color: "#4ade80", borderColor: "rgba(74, 222, 128, 0.3)", background: "rgba(74, 222, 128, 0.12)" }}>
+                  {engine === "live"
+                    ? `${aggregatedMetrics.rateCard.displayName} · Paid Tier`
+                    : "Cascade Pipeline · Public List Price"}
+                </span>
+              </div>
+              <div className="table-responsive">
+                {engine === "live" ? (
+                  <table className="obs-table">
+                    <thead>
+                      <tr>
+                        <th>Modality / Bucket</th>
+                        <th>Tokens</th>
+                        <th>Unit Rate</th>
+                        <th>Cost (USD)</th>
+                        <th>Cost (INR)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ color: "#38bdf8", fontWeight: 600 }}>Audio Input (User Speech)</td>
+                        <td>{aggregatedMetrics.audioInTokens.toLocaleString()}</td>
+                        <td>${aggregatedMetrics.rateCard.audioInPerMillion.toFixed(2)} / 1M</td>
+                        <td>{formatCost(aggregatedMetrics.audioInUSD)}</td>
+                        <td>₹{(aggregatedMetrics.audioInUSD * 86.5).toFixed(4)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: "#4ade80", fontWeight: 600 }}>Audio Output (Agent Voice)</td>
+                        <td>{aggregatedMetrics.audioOutTokens.toLocaleString()}</td>
+                        <td>${aggregatedMetrics.rateCard.audioOutPerMillion.toFixed(2)} / 1M</td>
+                        <td>{formatCost(aggregatedMetrics.audioOutUSD)}</td>
+                        <td>₹{(aggregatedMetrics.audioOutUSD * 86.5).toFixed(4)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: "#c084fc", fontWeight: 600 }}>Text / Prompt Input (Cards & Tools)</td>
+                        <td>{aggregatedMetrics.textInTokens.toLocaleString()}</td>
+                        <td>${aggregatedMetrics.rateCard.textInPerMillion.toFixed(2)} / 1M</td>
+                        <td>{formatCost(aggregatedMetrics.textInUSD)}</td>
+                        <td>₹{(aggregatedMetrics.textInUSD * 86.5).toFixed(4)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: "#fbbf24", fontWeight: 600 }}>Text / Thinking Output</td>
+                        <td>{aggregatedMetrics.textOutTokens.toLocaleString()}</td>
+                        <td>${aggregatedMetrics.rateCard.textOutPerMillion.toFixed(2)} / 1M</td>
+                        <td>{formatCost(aggregatedMetrics.textOutUSD)}</td>
+                        <td>₹{(aggregatedMetrics.textOutUSD * 86.5).toFixed(4)}</td>
+                      </tr>
+                      <tr style={{ borderTop: "1px solid rgba(255, 255, 255, 0.14)", background: "rgba(74, 222, 128, 0.06)" }}>
+                        <td style={{ color: "#f8fafc", fontWeight: 700 }}>Total Session Cost</td>
+                        <td>
+                          <strong>{aggregatedMetrics.totalTokens.toLocaleString()}</strong>
+                        </td>
+                        <td>
+                          {aggregatedMetrics.turns > 0
+                            ? `${formatCost(aggregatedMetrics.avgCostPerTurnUSD)} / turn`
+                            : "—"}
+                        </td>
+                        <td style={{ color: "#4ade80", fontWeight: 700 }}>
+                          {formatCost(aggregatedMetrics.costUSD)}
+                        </td>
+                        <td style={{ color: "#4ade80", fontWeight: 700 }}>
+                          ₹{aggregatedMetrics.costINR.toFixed(4)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="obs-table">
+                    <thead>
+                      <tr>
+                        <th>Pipeline Stage</th>
+                        <th>Requests</th>
+                        <th>Status / Cost (USD)</th>
+                        <th>Cost (INR)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(["stt", "llm", "tts"] as const).map((stg) => {
+                        const row = aggregatedMetrics.activeCascadeCost?.stages.find((s) => s.stage === stg);
+                        const usd = row ? Number(row.known_usd || 0) : 0;
+                        return (
+                          <tr key={stg}>
+                            <td style={{ fontWeight: 600, textTransform: "uppercase" }}>{stg}</td>
+                            <td>{row?.requests ?? 0}</td>
+                            <td>{stageLabel(row)}</td>
+                            <td>₹{(usd * 86.5).toFixed(4)}</td>
+                          </tr>
+                        );
+                      })}
+                      <tr style={{ borderTop: "1px solid rgba(255, 255, 255, 0.14)", background: "rgba(74, 222, 128, 0.06)" }}>
+                        <td style={{ color: "#f8fafc", fontWeight: 700 }}>Total Session Cost</td>
+                        <td>{aggregatedMetrics.turns} turns</td>
+                        <td style={{ color: "#4ade80", fontWeight: 700 }}>{formatCost(aggregatedMetrics.costUSD)}</td>
+                        <td style={{ color: "#4ade80", fontWeight: 700 }}>₹{aggregatedMetrics.costINR.toFixed(4)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
 

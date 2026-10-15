@@ -35,6 +35,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 from pipecat.services.google.tts import GoogleTTSService
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+import persona_identity
 import tts_script
 import voice_profiles
 
@@ -449,7 +450,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
                 payload = data.get("payload", {})
                 response_id = self.response_identity.current
                 if payload.get("type") == "usage":
-                    response_id = self.response_identity.completed or response_id
+                    response_id = self.response_identity.current or self.response_identity.completed
                 data = {**data, "payload": self.response_identity.stamp(payload, response_id=response_id)}
             frame.message = {**frame.message, "data": data}
         await super().push_frame(frame, direction)
@@ -1039,6 +1040,26 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         response_tokens = int(getattr(usage, 'response_token_count', 0) or 0)
         total_tokens = int(getattr(usage, 'total_token_count', 0) or 0)
 
+        active_rid = self.response_identity.current or self.response_identity.completed or "turn"
+        sig_map = getattr(self, "_usage_sig_by_response", None)
+        if sig_map is None:
+            sig_map = {}
+            self._usage_sig_by_response = sig_map
+        rev_map = getattr(self, "_usage_rev_by_response", None)
+        if rev_map is None:
+            rev_map = {}
+            self._usage_rev_by_response = rev_map
+        sig = (prompt_tokens, response_tokens, total_tokens)
+        prev_sig = sig_map.get(active_rid)
+        if prev_sig is None:
+            rev = 0
+        elif prev_sig == sig:
+            rev = rev_map.get(active_rid, 0)
+        else:
+            rev = rev_map.get(active_rid, 0) + 1
+        sig_map[active_rid] = sig
+        rev_map[active_rid] = rev
+
         usage_dict = {
             "prompt_token_count": prompt_tokens,
             "response_token_count": response_tokens,
@@ -1050,7 +1071,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
             "tool_use_prompt_token_count": getattr(usage, "tool_use_prompt_token_count", None),
             "phase": "final",
             "service": "live",
-            "revision": 0,
+            "revision": rev,
         }
         self._last_turn_usage = usage_dict
         
@@ -1181,6 +1202,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
             logger.error(f"❌ [FactStore Injection] Error sending client_content: {e}")
 
     async def _handle_msg_tool_call(self, message):
+        self.response_identity.begin()
         # Metric Streaming: Tool Call
         tool_calls = []
         if hasattr(message.tool_call, 'function_calls'):
@@ -1206,8 +1228,12 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         if isinstance(self, GeminiLiveVertexLLMService):
             # Transcription language pinning is Vertex AI Enterprise only.
             from google.genai.types import AudioTranscriptionConfig
-            config.input_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
-            config.output_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
+            if getattr(self, "_multilingual_transcription", False):
+                config.input_audio_transcription = AudioTranscriptionConfig()
+                config.output_audio_transcription = AudioTranscriptionConfig()
+            else:
+                config.input_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
+                config.output_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
 
         # Enforce sliding_window.target_tokens on context compression (80% of trigger_tokens)
         if getattr(config, "context_window_compression", None):
@@ -1474,9 +1500,11 @@ class StartTriggerProcessor(FrameProcessor):
         self,
         language: str = "en-US",
         gate_mic_on_greeting: bool = False,
+        persona_id: Optional[str] = None,
     ):
         super().__init__()
         self.language = language
+        self.persona_id = persona_id
         self.triggered = False
         self.gate_mic_on_greeting = gate_mic_on_greeting
         self._mic_gated = gate_mic_on_greeting
@@ -1517,7 +1545,15 @@ class StartTriggerProcessor(FrameProcessor):
                 if not self.triggered:
                     self.triggered = True
                     self._gate_start_time = time.monotonic()
-                    greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
+                    if persona_identity.normalize_persona_id(self.persona_id) == "asian-paints":
+                        if self.language == "mr-IN":
+                            greeting_text = "नमस्कार रिया जी!"
+                        elif self.language == "hi-IN":
+                            greeting_text = "नमस्ते रिया जी!"
+                        else:
+                            greeting_text = "नमस्ते रिया जी! Hello, please speak in your natural Indian accent."
+                    else:
+                        greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
                     logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
                     await self.push_frame(LLMMessagesAppendFrame(messages=[{"role": "user", "content": greeting_text}]))
                     await self.push_frame(LLMRunFrame())
@@ -1660,6 +1696,7 @@ def compose_live_system_prompt(
     gender: str,
     language: str,
     voice: Optional[str] = None,
+    persona_id: Optional[str] = None,
 ) -> str:
     """Build the system prompt for a Live session.
 
@@ -1678,6 +1715,16 @@ def compose_live_system_prompt(
     gender_rule = tts_script.voice_gender_rule(voice)
     if gender_rule:
         base = f"{base}\n\n{gender_rule}"
+    if persona_identity.normalize_persona_id(persona_id) == "asian-paints":
+        effective_lang = "en-IN" if language == "en-US" else language
+        return (
+            f"{base}\n\n"
+            f"IMPORTANT: Primary language setting is {effective_lang}. "
+            "You MUST speak with a full, natural, unmistakable INDIAN ACCENT (en-IN) at all times, "
+            "including when speaking English (never use an American or British accent). "
+            "Seamlessly switch between Indian English (en-IN), Hindi (hi-IN), Hinglish, and Marathi (mr-IN) "
+            "to match the caller's language on every turn."
+        )
     return f"{base}\n\nIMPORTANT: You must converse in {language} language."
 
 
@@ -1969,8 +2016,13 @@ async def run_agent_live(
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "deep-clock-339817"
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
 
+    canonical_persona_id = persona_identity.normalize_persona_id(persona_id)
+    if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede")):
+        voice = "Kore"
+
     gender = voice_profiles.voice_gender(voice) or "female"
-    logger.info(f"Starting agent with language: {language}")
+    effective_speech_language = "en-IN" if (canonical_persona_id == "asian-paints" and language == "en-US") else language
+    logger.info(f"Starting agent with language: {language} (effective speech locale: {effective_speech_language})")
 
     # Resolved before the prompt is composed: an architecture may own its system
     # instruction outright. Routing is on persona_id alone -- the instruction text
@@ -1987,7 +2039,9 @@ async def run_agent_live(
             f"{persona_architecture.pattern.value}; client-provided text ignored."
         )
 
-    prompt_text = compose_live_system_prompt(effective_instruction, gender, language, voice)
+    prompt_text = compose_live_system_prompt(
+        effective_instruction, gender, effective_speech_language, voice, persona_id=persona_id
+    )
 
     initial_user_id = os.getenv("ACTIVE_USER_ID", "default_user")
     # Option B: Path 1 pre-loading disabled - force live deep recall tool execution for every memory query
@@ -2003,7 +2057,7 @@ async def run_agent_live(
         "ru-RU": Language.RU_RU, "ta-IN": Language.TA_IN, "te-IN": Language.TE_IN, "th-TH": Language.TH_TH,
         "tr-TR": Language.TR_TR, "vi-VN": Language.VI_VN,
     }
-    pipecat_language = language_map.get(language, Language.EN_US)
+    pipecat_language = language_map.get(effective_speech_language, Language.EN_US)
 
     effective_vad_mode, use_silero, disable_gemini_vad = resolve_live_vad_mode(vad, vad_mode)
     logger.info(
@@ -2217,6 +2271,8 @@ async def run_agent_live(
         llm = CustomGeminiLiveVertexLLMService(**vertex_params)
 
     # Avatar & Voice Clone flags for CustomGeminiLiveVertexLLMService._connection_task_handler & _handle_msg_model_turn
+    llm._language_code = effective_speech_language
+    llm._multilingual_transcription = (canonical_persona_id == "asian-paints")
     llm._avatar_enabled = bool(avatar_enabled)
     llm._avatar_name = resolved_avatar_name
     llm._avatar_custom_image = avatar_custom_image
@@ -2290,8 +2346,9 @@ async def run_agent_live(
 
     gate_mic_on_greeting = "3.1" in (model or "")
     start_trigger = StartTriggerProcessor(
-        language=language,
+        language=effective_speech_language,
         gate_mic_on_greeting=gate_mic_on_greeting,
+        persona_id=persona_id,
     )
     llm.start_trigger = start_trigger
 

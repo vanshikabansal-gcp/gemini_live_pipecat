@@ -25,7 +25,13 @@ class ResponseIdentity:
         if identity:
             result["response_id"] = identity
             # Usage is finalized once per provider response. Re-delivery keeps
-            # this identity, rather than looking like another billable request.
-            suffix = "usage" if result.get("type") == "usage" else str(uuid4())
+            # this identity, rather than looking like another billable request,
+            # while genuine token revisions on the same response increment :r{rev}.
+            usage_obj = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+            rev = usage_obj.get("revision", 0)
+            if result.get("type") == "usage":
+                suffix = f"usage:r{rev}" if isinstance(rev, int) and rev > 0 else "usage"
+            else:
+                suffix = str(uuid4())
             result["event_id"] = f"{self.session_id}:{identity}:{suffix}"
         return result

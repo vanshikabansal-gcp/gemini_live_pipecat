@@ -215,11 +215,13 @@ export default function VoiceStudio({ sourceDownload = false }: { sourceDownload
       onClose={() => setObservabilityOpen(false)}
       backendUrl={settings.backendUrl?.trim() || getDefaultBackendUrl()}
       engine={settings.engine}
+      model={settings.model}
       sessionId={settings.sessionId}
       sessionTurnCount={turnCount}
       sessionTokens={tokenCount}
       sessionTokenSplit={tokenSplit}
       sessionCost={sessionCostUSD}
+      cascadeCost={studio.cascadeCost}
       sessionInterrupts={interruptCount}
     />
   </main>

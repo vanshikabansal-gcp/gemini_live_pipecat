@@ -207,7 +207,25 @@ class TestResponseEvents(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage["usage"]["cached_content_token_count"], 10)
         self.assertEqual(usage["usage"]["total_token_count"], 100)
         await service._handle_msg_model_turn(None)
-        self.assertNotEqual(service.response_identity.current, first)
+        second = service.response_identity.current
+        self.assertNotEqual(second, first)
+        # Turn 2 usage arriving while current is active must stamp Turn 2, not Turn 1's completed ID,
+        # and revised token counts on the same response must increment revision & event_id.
+        msg_turn2_tool = SimpleNamespace(usage_metadata=SimpleNamespace(
+            prompt_token_count=80, response_token_count=15, total_token_count=95,
+        ))
+        msg_turn2_final = SimpleNamespace(usage_metadata=SimpleNamespace(
+            prompt_token_count=110, response_token_count=45, total_token_count=155,
+        ))
+        await service._handle_msg_usage_metadata(msg_turn2_tool)
+        await service._handle_msg_usage_metadata(msg_turn2_final)
+        u_tool = service.frames[-2].message["data"]["payload"]
+        u_final = service.frames[-1].message["data"]["payload"]
+        self.assertEqual(u_tool["response_id"], second)
+        self.assertEqual(u_final["response_id"], second)
+        self.assertEqual(u_tool["usage"]["revision"], 0)
+        self.assertEqual(u_final["usage"]["revision"], 1)
+        self.assertNotEqual(u_tool["event_id"], u_final["event_id"])
 
     async def test_cascade_text_and_usage_are_stamped_before_they_are_queued(self):
         # Vertex and AI Studio LLM services share these methods via the mixin.

@@ -148,12 +148,25 @@ class TestPersonaPromptCards(unittest.TestCase):
 
         root = get_persona_system_instruction("asian-paints", engine="live")
         self.assertIn("Asian Paints Beautiful Homes Painting Service", root)
-        self.assertIn("INDIAN ACCENT", root)
+        self.assertIn("Indian English", root)
+        self.assertIn("Hindi", root)
+        self.assertIn("Hinglish", root)
+        self.assertIn("Marathi", root)
+        self.assertIn("en-IN", root)
+        self.assertIn("नमस्ते जी!", root)
         self.assertIn("check_pincode_serviceability", root)
         self.assertIn("switch_phase", root)
+        self.assertLess(len(root), 2200)
+
+        for phase_id, card in all_cards.items():
+            rendered = format_persona_prompt_card("asian-paints", card, state={"pincode": "400053", "city": "Mumbai"})
+            self.assertIn("Marathi", rendered)
+            self.assertIn("en-IN", rendered)
+            self.assertLess(len(rendered), 3200, f"Card {phase_id} exceeded 3200 chars")
 
         monolithic = get_persona_system_instruction("asian-paints", engine="cascade")
         self.assertIn("Asian Paints Beautiful Homes Painting Service", monolithic)
+        self.assertIn("Marathi", monolithic)
         self.assertIn("Highlightation Texture", monolithic)
         self.assertIn("verification code", monolithic)
 

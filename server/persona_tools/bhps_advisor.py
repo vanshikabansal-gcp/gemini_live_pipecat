@@ -10,7 +10,15 @@ from __future__ import annotations
 import asyncio
 import re
 from typing import Any, Callable, Dict, Optional
-from google.genai import types
+try:
+    from google.genai import types
+except ImportError:
+    from types import SimpleNamespace
+    types = SimpleNamespace(
+        FunctionDeclaration=lambda **kw: SimpleNamespace(**kw),
+        Schema=lambda **kw: SimpleNamespace(**kw),
+        Type=SimpleNamespace(OBJECT="OBJECT", STRING="STRING", BOOLEAN="BOOLEAN", ARRAY="ARRAY"),
+    )
 try:
     from loguru import logger
 except ImportError:

@@ -2079,8 +2079,8 @@
 
 .obs-kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
 }
 
 .obs-kpi-card {

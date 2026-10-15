@@ -122,6 +122,8 @@ def record_provider_usage(payload):
         "prompt_tokens_details",
         "cache_tokens_details",
         "response_tokens_details",
+        "prompt_details",
+        "response_details",
         "thoughts_token_count",
         "cached_content_token_count",
     ):
@@ -135,7 +137,18 @@ def record_provider_usage(payload):
 def _usage_summary(session_id):
     responses = {r["response_id"]: r["usage"] for r in DIAGNOSTIC_LOG_BUFFER
                  if r.get("session_id") == session_id and "usage" in r}
+    prompt_details: Dict[str, int] = {}
+    response_details: Dict[str, int] = {}
+    for u in responses.values():
+        for k, v in (u.get("prompt_details") or {}).items():
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                prompt_details[k] = prompt_details.get(k, 0) + v
+        for k, v in (u.get("response_details") or {}).items():
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                response_details[k] = response_details.get(k, 0) + v
     return {"count": len(responses), "scope": "retained_response_snapshots",
+            "prompt_details": prompt_details,
+            "response_details": response_details,
             **{key: sum(u[key] for u in responses.values()) for key in
                ("prompt_token_count", "response_token_count", "total_token_count")}}
 

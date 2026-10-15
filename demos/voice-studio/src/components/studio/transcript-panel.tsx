@@ -326,11 +326,15 @@ export default function TranscriptPanel({ studio }: { studio: VoiceStudio }) {
                     {message.role === "assistant" && (
                       <div className="bubble-latency-group">
                         {settings.engine === "live" ? (
-                          message.metrics?.llmLatency !== undefined ? (
+                          (message.metrics?.llmLatency !== undefined ||
+                            message.metrics?.usage?.total_token_count ||
+                            message.metrics?.turnCostUSD !== undefined) ? (
                             <div className="bubble-latency live-badge">
                               <Zap size={11} />
-                              <span>Live TTFB: {Math.round(message.metrics.llmLatency * 1000)}ms</span>
-                              {message.metrics.usage?.total_token_count ? (
+                              {message.metrics?.llmLatency !== undefined && (
+                                <span>Live TTFB: {Math.round(message.metrics.llmLatency * 1000)}ms</span>
+                              )}
+                              {message.metrics?.usage?.total_token_count ? (
                                 <span className="token-tag">{message.metrics.usage.total_token_count} tok</span>
                               ) : null}
                               {isLivePricingEligible(settings.engine, settings.model) &&

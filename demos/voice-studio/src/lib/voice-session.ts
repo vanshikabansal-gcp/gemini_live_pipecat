@@ -315,21 +315,21 @@ export const PERSONA_VOICE_DESIGN_MAP: Record<string, PersonaVoiceDesign> = {
     ttsPaceLabel: "Natural",
     ttsAccent: "Indian",
     ttsPitch: "Default",
-    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, unmistakable Indian accent across Indian English, Hindi, Hinglish, and Marathi.",
   },
   bhps: {
     ttsStyle: "Warm & Friendly",
     ttsPaceLabel: "Natural",
     ttsAccent: "Indian",
     ttsPitch: "Default",
-    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, unmistakable Indian accent across Indian English, Hindi, Hinglish, and Marathi.",
   },
   riya: {
     ttsStyle: "Warm & Friendly",
     ttsPaceLabel: "Natural",
     ttsAccent: "Indian",
     ttsPitch: "Default",
-    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, natural Indian accent.",
+    ttsVoicePrompt: "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, unmistakable Indian accent across Indian English, Hindi, Hinglish, and Marathi.",
   },
 };
 
