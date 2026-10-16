@@ -101,12 +101,12 @@ PERSONA_VOICE_DESIGN_DEFAULTS: dict[str, dict[str, str]] = {
         "prompt": "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, unmistakable Indian accent across Indian English, Hindi, Hinglish, and Marathi.",
     },
     "astrotalk-panditji": {
-        "voice": "Charon",
+        "voice": "Puck",
         "style": "Calm & Soothing",
         "pace": "Natural",
         "accent": "Indian",
         "pitch": "Default",
-        "prompt": "Wise, warm, and reassuring Indian Vedic Astrologer (Panditji / Jyotish Acharya) from Astrotalk with an authentic Indian accent, calm scholarly cadence, and compassionate guidance.",
+        "prompt": "Wise, warm, and reassuring Indian Vedic Astrologer (Panditji / Jyotish Acharya) from Astrotalk with a 100% pure Indian accent across all Indian languages (Hindi, Hinglish, Indian English, Marathi, Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi).",
     },
 }
 

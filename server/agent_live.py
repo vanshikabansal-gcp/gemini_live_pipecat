@@ -1554,7 +1554,7 @@ class StartTriggerProcessor(FrameProcessor):
                         else:
                             greeting_text = "नमस्ते रिया जी! Hello, please speak in your natural Indian accent."
                     elif norm_pid == "astrotalk-panditji":
-                        greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण!"
+                        greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण! Please speak in your pure Indian Panditji accent."
                     else:
                         greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
                     logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
@@ -1734,9 +1734,10 @@ def compose_live_system_prompt(
         return (
             f"{base}\n\n"
             f"IMPORTANT: Primary language setting is {effective_lang}. "
-            "You MUST speak with a warm, wise, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times, "
+            "You MUST speak with a 100% pure, warm, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times, "
             "including when speaking English (never use an American or British accent). "
-            "Seamlessly switch between Hindi (hi-IN), Hinglish, and Indian English (en-IN) to match the caller."
+            "Seamlessly converse in and switch across all Indian languages (Hindi, Hinglish, Indian English, Marathi, "
+            "Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi, and Sanskrit shlokas) to match the caller."
         )
     return f"{base}\n\nIMPORTANT: You must converse in {language} language."
 
@@ -2032,15 +2033,16 @@ async def run_agent_live(
     canonical_persona_id = persona_identity.normalize_persona_id(persona_id)
     if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede")):
         voice = "Kore"
-    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore")):
-        voice = "Charon"
+    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore", "Charon")):
+        voice = "Puck"
 
     gender = voice_profiles.voice_gender(voice) or "female"
-    effective_speech_language = (
-        "en-IN"
-        if (canonical_persona_id in ("asian-paints", "astrotalk-panditji") and language == "en-US")
-        else language
-    )
+    if canonical_persona_id == "astrotalk-panditji" and language == "en-US":
+        effective_speech_language = "hi-IN"
+    elif canonical_persona_id == "asian-paints" and language == "en-US":
+        effective_speech_language = "en-IN"
+    else:
+        effective_speech_language = language
     logger.info(f"Starting agent with language: {language} (effective speech locale: {effective_speech_language})")
 
     # Resolved before the prompt is composed: an architecture may own its system
