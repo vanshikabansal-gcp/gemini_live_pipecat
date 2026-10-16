@@ -1545,13 +1545,16 @@ class StartTriggerProcessor(FrameProcessor):
                 if not self.triggered:
                     self.triggered = True
                     self._gate_start_time = time.monotonic()
-                    if persona_identity.normalize_persona_id(self.persona_id) == "asian-paints":
+                    norm_pid = persona_identity.normalize_persona_id(self.persona_id)
+                    if norm_pid == "asian-paints":
                         if self.language == "mr-IN":
                             greeting_text = "नमस्कार रिया जी!"
                         elif self.language == "hi-IN":
                             greeting_text = "नमस्ते रिया जी!"
                         else:
                             greeting_text = "नमस्ते रिया जी! Hello, please speak in your natural Indian accent."
+                    elif norm_pid == "astrotalk-panditji":
+                        greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण!"
                     else:
                         greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
                     logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
@@ -1715,7 +1718,8 @@ def compose_live_system_prompt(
     gender_rule = tts_script.voice_gender_rule(voice)
     if gender_rule:
         base = f"{base}\n\n{gender_rule}"
-    if persona_identity.normalize_persona_id(persona_id) == "asian-paints":
+    norm_pid = persona_identity.normalize_persona_id(persona_id)
+    if norm_pid == "asian-paints":
         effective_lang = "en-IN" if language == "en-US" else language
         return (
             f"{base}\n\n"
@@ -1724,6 +1728,15 @@ def compose_live_system_prompt(
             "including when speaking English (never use an American or British accent). "
             "Seamlessly switch between Indian English (en-IN), Hindi (hi-IN), Hinglish, and Marathi (mr-IN) "
             "to match the caller's language on every turn."
+        )
+    if norm_pid == "astrotalk-panditji":
+        effective_lang = "hi-IN" if language == "en-US" else language
+        return (
+            f"{base}\n\n"
+            f"IMPORTANT: Primary language setting is {effective_lang}. "
+            "You MUST speak with a warm, wise, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times, "
+            "including when speaking English (never use an American or British accent). "
+            "Seamlessly switch between Hindi (hi-IN), Hinglish, and Indian English (en-IN) to match the caller."
         )
     return f"{base}\n\nIMPORTANT: You must converse in {language} language."
 
@@ -2019,9 +2032,15 @@ async def run_agent_live(
     canonical_persona_id = persona_identity.normalize_persona_id(persona_id)
     if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede")):
         voice = "Kore"
+    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore")):
+        voice = "Charon"
 
     gender = voice_profiles.voice_gender(voice) or "female"
-    effective_speech_language = "en-IN" if (canonical_persona_id == "asian-paints" and language == "en-US") else language
+    effective_speech_language = (
+        "en-IN"
+        if (canonical_persona_id in ("asian-paints", "astrotalk-panditji") and language == "en-US")
+        else language
+    )
     logger.info(f"Starting agent with language: {language} (effective speech locale: {effective_speech_language})")
 
     # Resolved before the prompt is composed: an architecture may own its system
@@ -2272,7 +2291,7 @@ async def run_agent_live(
 
     # Avatar & Voice Clone flags for CustomGeminiLiveVertexLLMService._connection_task_handler & _handle_msg_model_turn
     llm._language_code = effective_speech_language
-    llm._multilingual_transcription = (canonical_persona_id == "asian-paints")
+    llm._multilingual_transcription = canonical_persona_id in ("asian-paints", "astrotalk-panditji")
     llm._avatar_enabled = bool(avatar_enabled)
     llm._avatar_name = resolved_avatar_name
     llm._avatar_custom_image = avatar_custom_image

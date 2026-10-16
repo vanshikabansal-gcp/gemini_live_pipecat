@@ -53,6 +53,8 @@ class ArchitecturePattern(str, Enum):
     GLASS_BUDDY = "glass_buddy"
     #: Riya's Asian Paints Beautiful Homes Painting Service (BHPS) with SF API, qualification, and booking tools.
     JIT_BHPS_ADVISOR = "jit_bhps_advisor"
+    #: Pandit Raghavendra Ji's Astrotalk Vedic Astrology & Kundli Consultation with Kundli, Dasha, and Upay tools.
+    JIT_ASTROTALK_PANDITJI = "jit_astrotalk_panditji"
 
 
 class PersonaConfig(NamedTuple):
@@ -94,6 +96,12 @@ PERSONA_REGISTRY: Dict[str, PersonaConfig] = {
     "asian-paints": PersonaConfig(
         persona_id="asian-paints",
         architecture=ArchitecturePattern.JIT_BHPS_ADVISOR,
+        is_ui_editable=False,
+    ),
+    # Pandit Raghavendra Ji - Astrotalk Vedic Astrology & Kundli Consultation (Kundli + Dasha + Upay + JIT phase cards)
+    "astrotalk-panditji": PersonaConfig(
+        persona_id="astrotalk-panditji",
+        architecture=ArchitecturePattern.JIT_ASTROTALK_PANDITJI,
         is_ui_editable=False,
     ),
     "storyteller": PersonaConfig("storyteller", ArchitecturePattern.MONOLITHIC_STATIC),
@@ -928,6 +936,132 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
         return registered
 
 
+class AstrotalkPanditjiArchitecture(BasePersonaArchitecture):
+    """Pandit Raghavendra Ji: Astrotalk Vedic Astrology & Kundli Consultation Advisor.
+
+    Manages Janam Kundli / Prashna Kundli calculation, Vimshottari Mahadasha & Gochar
+    transit analysis across Career, Marriage/Love (Gun Milan), Wealth, and Health, plus
+    Saatvik Vedic Upay, AstroMall Gemstone & Online E-Pooja booking with JIT phase cards.
+    """
+
+    pattern = ArchitecturePattern.JIT_ASTROTALK_PANDITJI
+    model_controls_conversation = True
+
+    def __init__(self) -> None:
+        self._llm = None
+        self._broadcast = None
+        self._card_lock = asyncio.Lock()
+        self._last_card_key = None
+        self._engine = None
+        self._pending_card_args: Optional[Dict[str, Any]] = None
+
+    async def flush_pending_card(self) -> None:
+        if self._pending_card_args is not None:
+            args = self._pending_card_args
+            self._pending_card_args = None
+            async with self._card_lock:
+                await self._switch_phase(args)
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            from persona_tools.astrotalk_panditji import AstrotalkPanditjiEngine
+            self._engine = AstrotalkPanditjiEngine(broadcast=self._broadcast)
+        return self._engine
+
+    def has_exclusive_tools(self, engine: str = "live") -> bool:
+        return True
+
+    def compose_system_prompt(self, system_instruction: Optional[str], engine: str = "live") -> Optional[str]:
+        from persona_prompt_cards.panditji_cards import (
+            get_panditji_monolithic_system_instruction,
+            get_panditji_root_system_instruction,
+        )
+        if engine == "cascade":
+            return get_panditji_monolithic_system_instruction()
+        return get_panditji_root_system_instruction()
+
+    def get_tool_schemas(self, engine: str = "live") -> List[Any]:
+        from persona_tools.astrotalk_panditji import (
+            generate_janam_kundli_schema,
+            analyze_kundli_question_schema,
+            recommend_vedic_remedies_schema,
+            switch_phase_schema,
+        )
+        tools = [
+            generate_janam_kundli_schema,
+            analyze_kundli_question_schema,
+            recommend_vedic_remedies_schema,
+        ]
+        if engine != "cascade":
+            tools.append(switch_phase_schema)
+        return standard_function_schemas(tools)
+
+    async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        from persona_prompt_cards.panditji_cards import (
+            get_panditji_phase_card,
+            format_panditji_prompt_card,
+        )
+
+        phase_id = args.get("phase_id", "")
+        card = get_panditji_phase_card(phase_id)
+        if not card:
+            return {"status": "invalid_phase", "message": f"Unknown phase {phase_id}"}
+
+        slots = dict(getattr(self.engine, "slots", {}) or {})
+        return await _deliver_phase_card(
+            self,
+            card,
+            lambda c: format_panditji_prompt_card(c, state=slots),
+            "Panditji",
+        )
+
+    def register_handlers(self, llm: Any, broadcast=None, engine: str = "live") -> List[str]:
+        self._llm = llm
+        self._broadcast = broadcast
+        if self._engine:
+            self._engine._broadcast = broadcast
+
+        registered = []
+        if engine != "cascade":
+            async def handle_switch_phase(params):
+                async with self._card_lock:
+                    result = await self._switch_phase(params.arguments or {})
+                await params.result_callback(result)
+            llm.register_function("switch_phase", handle_switch_phase)
+            registered.append("switch_phase")
+
+        async def handle_generate_janam_kundli(params):
+            async with self._card_lock:
+                result = await self.engine.generate_janam_kundli(params.arguments or {})
+                if engine != "cascade" and self.engine.active_phase == "SOP_01_BIRTH_DETAILS":
+                    await self._switch_phase({"phase_id": "SOP_02_KUNDLI_DASHAS"})
+            await params.result_callback(result)
+
+        async def handle_analyze_kundli_question(params):
+            async with self._card_lock:
+                result = await self.engine.analyze_kundli_question(params.arguments or {})
+                if engine != "cascade" and self.engine.active_phase in ("SOP_01_BIRTH_DETAILS", "SOP_02_KUNDLI_DASHAS"):
+                    await self._switch_phase({"phase_id": "SOP_03_LIFE_PREDICTION"})
+            await params.result_callback(result)
+
+        async def handle_recommend_vedic_remedies(params):
+            async with self._card_lock:
+                result = await self.engine.recommend_vedic_remedies(params.arguments or {})
+                if engine != "cascade":
+                    await self._switch_phase({"phase_id": "SOP_04_VEDIC_REMEDIES"})
+            await params.result_callback(result)
+
+        llm.register_function("generate_janam_kundli", handle_generate_janam_kundli)
+        registered.append("generate_janam_kundli")
+        llm.register_function("analyze_kundli_question", handle_analyze_kundli_question)
+        registered.append("analyze_kundli_question")
+        llm.register_function("recommend_vedic_remedies", handle_recommend_vedic_remedies)
+        registered.append("recommend_vedic_remedies")
+
+        return registered
+
+
 _ARCHITECTURE_IMPLEMENTATIONS = {
     ArchitecturePattern.MONOLITHIC_STATIC: MonolithicArchitecture,
     ArchitecturePattern.STATE_LADDER_NEGOTIATOR: NegotiatorLadderArchitecture,
@@ -935,6 +1069,7 @@ _ARCHITECTURE_IMPLEMENTATIONS = {
     ArchitecturePattern.JIT_MF_ADVISOR: AnanyaMFAdvisorArchitecture,
     ArchitecturePattern.GLASS_BUDDY: KavyaGlassBuddyArchitecture,
     ArchitecturePattern.JIT_BHPS_ADVISOR: AsianPaintsBHPSArchitecture,
+    ArchitecturePattern.JIT_ASTROTALK_PANDITJI: AstrotalkPanditjiArchitecture,
 }
 
 

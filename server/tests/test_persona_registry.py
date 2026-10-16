@@ -85,6 +85,9 @@ class TestPersonaRegistry(unittest.TestCase):
             "asian-paints": ArchitecturePattern.JIT_BHPS_ADVISOR,
             "bhps": ArchitecturePattern.JIT_BHPS_ADVISOR,
             "riya": ArchitecturePattern.JIT_BHPS_ADVISOR,
+            "astrotalk-panditji": ArchitecturePattern.JIT_ASTROTALK_PANDITJI,
+            "panditji": ArchitecturePattern.JIT_ASTROTALK_PANDITJI,
+            "astrotalk": ArchitecturePattern.JIT_ASTROTALK_PANDITJI,
         }
         for alias, pattern in expected.items():
             with self.subTest(alias=alias):

@@ -55,6 +55,11 @@ VOICE_NOTES: dict[str, str] = {
         "and gentle <breath> or <short pause> before reading pincodes or reference IDs. Stay warm, respectful, and "
         "polished: no <cough>, <sneeze> or <yawn>."
     ),
+    "astrotalk-panditji": (
+        "PANDITJI'S VOICE: [[calm scholarly Vedic Acharya, warm low-mid pitch, measured]], with an authentic Indian "
+        "Panditji cadence, gentle <breath> and <short pause> before Sanskrit terms, Nakshatras, Dashas, or blessings. "
+        "Reassuring and compassionate: no <cough>, <sneeze> or <yawn>."
+    ),
 }
 
 VOICE_NOTES["mf-advisor"] = VOICE_NOTES["ananya-advisor"]  # legacy id, mirrors persona_identity

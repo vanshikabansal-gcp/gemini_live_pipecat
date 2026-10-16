@@ -43,6 +43,14 @@ from persona_prompt_cards.bhps_cards import (
     get_bhps_root_system_instruction,
     get_bhps_monolithic_system_instruction,
 )
+from persona_prompt_cards.panditji_cards import (
+    PanditjiPhaseCard,
+    PANDITJI_CARDS,
+    get_panditji_phase_card,
+    format_panditji_prompt_card,
+    get_panditji_root_system_instruction,
+    get_panditji_monolithic_system_instruction,
+)
 from persona_prompt_cards.abhay_cards import (
     get_abhay_system_instruction,
     get_abhay_signature_instruction,
@@ -92,6 +100,13 @@ __all__ = [
     "format_bhps_prompt_card",
     "get_bhps_root_system_instruction",
     "get_bhps_monolithic_system_instruction",
+    # Pandit Raghavendra Ji (Astrotalk)
+    "PanditjiPhaseCard",
+    "PANDITJI_CARDS",
+    "get_panditji_phase_card",
+    "format_panditji_prompt_card",
+    "get_panditji_root_system_instruction",
+    "get_panditji_monolithic_system_instruction",
     # Other personas
     "get_abhay_system_instruction",
     "get_abhay_signature_instruction",
@@ -118,6 +133,8 @@ _PHASED = {
               get_kavya_root_system_instruction, get_kavya_monolithic_system_instruction),
     "asian-paints": (BHPS_CARDS, get_bhps_phase_card, format_bhps_prompt_card,
               get_bhps_root_system_instruction, get_bhps_monolithic_system_instruction),
+    "astrotalk-panditji": (PANDITJI_CARDS, get_panditji_phase_card, format_panditji_prompt_card,
+              get_panditji_root_system_instruction, get_panditji_monolithic_system_instruction),
 }
 _STATIC = {
     "car-negotiator": (get_abhay_system_instruction, get_abhay_signature_instruction),

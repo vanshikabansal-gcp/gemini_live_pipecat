@@ -21,6 +21,10 @@ PERSONA_ALIASES = {
     "riya": "asian-paints",
     "bhps": "asian-paints",
     "asian-paints-bhps": "asian-paints",
+    "panditji": "astrotalk-panditji",
+    "astrotalk": "astrotalk-panditji",
+    "acharya": "astrotalk-panditji",
+    "jyotish": "astrotalk-panditji",
 }
 
 
@@ -95,6 +99,14 @@ PERSONA_VOICE_DESIGN_DEFAULTS: dict[str, dict[str, str]] = {
         "accent": "Indian",
         "pitch": "Default",
         "prompt": "Warm, polite Indian customer care and home painting advisor from Asian Paints with a full, unmistakable Indian accent across Indian English, Hindi, Hinglish, and Marathi.",
+    },
+    "astrotalk-panditji": {
+        "voice": "Charon",
+        "style": "Calm & Soothing",
+        "pace": "Natural",
+        "accent": "Indian",
+        "pitch": "Default",
+        "prompt": "Wise, warm, and reassuring Indian Vedic Astrologer (Panditji / Jyotish Acharya) from Astrotalk with an authentic Indian accent, calm scholarly cadence, and compassionate guidance.",
     },
 }
 

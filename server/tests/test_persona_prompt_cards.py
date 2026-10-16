@@ -170,6 +170,53 @@ class TestPersonaPromptCards(unittest.TestCase):
         self.assertIn("Highlightation Texture", monolithic)
         self.assertIn("verification code", monolithic)
 
+    def test_astrotalk_panditji_cards_and_script_coverage(self):
+        card1 = get_persona_card("astrotalk-panditji", "SOP_01_BIRTH_DETAILS")
+        self.assertIsNotNone(card1)
+        self.assertEqual(card1.phase_id, "SOP_01_BIRTH_DETAILS")
+
+        # Alias lookups
+        card2 = get_persona_card("panditji", "kundli")
+        self.assertEqual(card2.phase_id, "SOP_02_KUNDLI_DASHAS")
+
+        card3 = get_persona_card("astrotalk", "marriage")
+        self.assertEqual(card3.phase_id, "SOP_03_LIFE_PREDICTION")
+
+        card4 = get_persona_card("jyotish", "upay")
+        self.assertEqual(card4.phase_id, "SOP_04_VEDIC_REMEDIES")
+
+        all_cards = get_persona_all_cards("astrotalk-panditji")
+        self.assertEqual(
+            set(all_cards.keys()),
+            {
+                "SOP_01_BIRTH_DETAILS",
+                "SOP_02_KUNDLI_DASHAS",
+                "SOP_03_LIFE_PREDICTION",
+                "SOP_04_VEDIC_REMEDIES",
+            },
+        )
+
+        root = get_persona_system_instruction("astrotalk-panditji", engine="live")
+        self.assertIn("Astrotalk", root)
+        self.assertIn("प्रणाम जी! जय श्री कृष्ण!", root)
+        self.assertIn("generate_janam_kundli", root)
+        self.assertIn("switch_phase", root)
+        self.assertLess(len(root), 2200)
+
+        for phase_id, card in all_cards.items():
+            rendered = format_persona_prompt_card(
+                "astrotalk-panditji",
+                card,
+                state={"lagna": "Vrishabha Lagna", "rashi": "Karka Rashi"},
+            )
+            self.assertIn("Pandit Raghavendra Ji", rendered)
+            self.assertLess(len(rendered), 3200, f"Card {phase_id} exceeded 3200 chars")
+
+        monolithic = get_persona_system_instruction("astrotalk-panditji", engine="cascade")
+        self.assertIn("Astrotalk", monolithic)
+        self.assertIn("generate_janam_kundli", monolithic)
+        self.assertIn("recommend_vedic_remedies", monolithic)
+
     def test_static_persona_instructions(self):
         abhay_inst = get_persona_system_instruction("car-negotiator")
         self.assertIn("Abhay", abhay_inst)
