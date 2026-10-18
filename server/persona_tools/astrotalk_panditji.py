@@ -358,7 +358,8 @@ class AstrotalkPanditjiEngine:
             "next_script_instruction": (
                 "Share the caller's Lagna, Rashi, Nakshatra, and current Mahadasha-Antardasha warmly in 1-2 reassuring "
                 "sentences, highlight their positive Raj Yoga / Gajakesari Yoga, and ask what specific question in "
-                f"{primary_concern or 'career, marriage, or finance'} they would like to explore first."
+                f"{primary_concern or 'career, marriage, or finance'} they would like to explore first. "
+                "Do NOT call switch_phase (SOP_02_KUNDLI_DASHAS is already active)."
             ),
         }
 
@@ -411,7 +412,7 @@ class AstrotalkPanditjiEngine:
                 "Explain the astrological reason (citing the house and current Dasha/Gochar transit) and the exact "
                 "favorable timeline in 1-2 warm, uplifting sentences. Then ask if they would like simple Saatvik "
                 "Vedic Upay (remedies) to strengthen this yoga, and WAIT for the caller to reply before calling "
-                "`recommend_vedic_remedies`."
+                "`recommend_vedic_remedies`. Do NOT call switch_phase (SOP_03_LIFE_PREDICTION is already active)."
             ),
         }
 
@@ -475,13 +476,20 @@ class AstrotalkPanditjiEngine:
                 "online_epooja": pooja_name if include_epooja else None,
                 "scheduled_muhurat": pooja_date,
                 "kundli_pdf_dispatched_to_app": True,
+                "next_action": "speak_remedies_and_warm_blessing_naturally",
+                "voice_rule": (
+                    "Deliver the remedies and blessing warmly to the caller in their Indian language, then ask if they "
+                    "have any other question. Do NOT call switch_phase or recommend_vedic_remedies again. "
+                    "Never say 'this is complete', 'this is already complete', or 'consultation complete'."
+                ),
                 "mandatory_spoken_points": (
                     f"1. Share 1-2 simple Saatvik remedies ({mantra} and {daan}). "
                     + (f"2. Mention optional gemstone/Rudraksha guidance ({gemstone}). " if include_gemstone else "")
                     + (f"3. Confirm {pooja_name} Sankalp for {pooja_date} (Ref {consultation_id}). " if include_epooja else "")
                     + f"4. Inform the caller that their full Janam Kundli PDF and written Upay summary ({consultation_id}) "
-                    "have been sent to their Astrotalk chat, and bless them warmly ('ईश्वर आपकी सभी मनोकामनाएं पूर्ण करें, शुभम् भवतु!'). "
-                    "Do NOT say 'This is complete' or 'This is already complete'."
+                    "have been sent to their Astrotalk chat, bless them warmly ('ईश्वर आपकी सभी मनोकामनाएं पूर्ण करें, शुभम् भवतु!'), "
+                    "and ask if they have any other question ('क्या आपका कोई और प्रश्न है?'). "
+                    "Do NOT call switch_phase or any tool after speaking, and NEVER say 'This is complete' or 'This is already complete'."
                 ),
             }
 

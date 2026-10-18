@@ -158,7 +158,7 @@ export type SessionSettings = {
   avatarCustomImage?: string;
   /** Whether subtle natural background ambience is mixed into the call audio. Defaults to true. */
   ambientNoise?: boolean;
-  /** Relative background ambience level (0..1). Defaults to 0.42. */
+  /** Relative background ambience level (0..1). Defaults to 0.22. */
   ambientLevel?: number;
   /**
    * Identifies this browser's session to the backend diagnostics buffer.
@@ -224,7 +224,7 @@ export const DEFAULT_SETTINGS: SessionSettings = {
   avatarName: "auto",
   avatarCustomImage: "",
   ambientNoise: true,
-  ambientLevel: 0.55,
+  ambientLevel: 0.22,
   sessionId: "",
 };
 

@@ -1,7 +1,9 @@
 """Unit tests for Astrotalk Panditji execution engine (Janam Kundli, Dasha Analysis, Vedic Upay)."""
 
 import unittest
+from unittest.mock import AsyncMock
 
+from persona_registry import AstrotalkPanditjiArchitecture
 from persona_tools.astrotalk_panditji import AstrotalkPanditjiEngine
 
 
@@ -62,9 +64,66 @@ class TestAstrotalkPanditji(unittest.IsolatedAsyncioTestCase):
             "preferred_pooja_date": "Coming Thursday",
         })
         self.assertEqual(res1["status"], "remedies_prescribed")
+        self.assertEqual(res1["next_action"], "speak_remedies_and_warm_blessing_naturally")
+        self.assertIn("Never say 'this is complete'", res1["voice_rule"])
         self.assertEqual(res1["consultation_id"], res2["consultation_id"])
         self.assertTrue(res1["consultation_id"].startswith("AT-KUNDLI-"))
         self.assertTrue(any(e.get("type") == "booking_confirmed" for e in events))
+
+    async def test_architecture_auto_phase_transitions_and_no_meta_utterance(self):
+        arch = AstrotalkPanditjiArchitecture()
+        llm = AsyncMock()
+        llm.inject_directive = AsyncMock(return_value=True)
+        events = []
+
+        async def broadcast(ev):
+            events.append(ev)
+
+        handlers = {}
+        llm.register_function = lambda name, fn: handlers.setdefault(name, fn)
+        arch.register_handlers(llm, broadcast=broadcast, engine="live")
+
+        class DummyParams:
+            def __init__(self, arguments):
+                self.arguments = arguments
+                self.result = None
+
+            async def result_callback(self, res):
+                self.result = res
+
+        # 1. generate_janam_kundli auto-transitions to SOP_02_KUNDLI_DASHAS
+        p1 = DummyParams({
+            "caller_name": "Aarav",
+            "birth_date": "15 August 1995",
+            "birth_time": "10:30 AM",
+            "birth_place": "Delhi",
+        })
+        await handlers["generate_janam_kundli"](p1)
+        self.assertEqual(arch.engine.active_phase, "SOP_02_KUNDLI_DASHAS")
+
+        # 2. analyze_kundli_question auto-transitions to SOP_03_LIFE_PREDICTION
+        p2 = DummyParams({
+            "domain": "career",
+            "specific_question": "When will I get promoted?",
+        })
+        await handlers["analyze_kundli_question"](p2)
+        self.assertEqual(arch.engine.active_phase, "SOP_03_LIFE_PREDICTION")
+
+        # 3. recommend_vedic_remedies auto-transitions to SOP_04_VEDIC_REMEDIES
+        p3 = DummyParams({
+            "remedy_focus": "career_growth",
+            "include_gemstone": True,
+        })
+        await handlers["recommend_vedic_remedies"](p3)
+        self.assertEqual(arch.engine.active_phase, "SOP_04_VEDIC_REMEDIES")
+        self.assertEqual(p3.result["next_action"], "speak_remedies_and_warm_blessing_naturally")
+        self.assertIn("Never say 'this is complete'", p3.result["voice_rule"])
+
+        # 4. Redundant switch_phase to SOP_04_VEDIC_REMEDIES returns already_sent + anti-meta voice_rule
+        p4 = DummyParams({"phase_id": "SOP_04_VEDIC_REMEDIES"})
+        await handlers["switch_phase"](p4)
+        self.assertEqual(p4.result["delivery_status"], "already_sent")
+        self.assertIn("NEVER say 'This is complete'", p4.result["voice_rule"])
 
 
 if __name__ == "__main__":

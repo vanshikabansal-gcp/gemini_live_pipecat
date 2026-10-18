@@ -1189,17 +1189,23 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         )
 
         try:
-            await self.inject_directive(prompt_card, tag="FactStore", speak_now=False)
+            # Store snapshot without pushing an unsolicited role="user" turn after turn_complete.
+            # Pushing send_client_content(role="user") during post-turn silence while the user's
+            # microphone is open causes Gemini Live's server-side VAD to treat the transcript log
+            # as a new user prompt and utter meta-phrases like "This is complete" or
+            # "This is already complete". Native SlidingWindow(target_tokens=80%) already preserves
+            # recent turns in the active context window.
+            self._last_factstore_snapshot = prompt_card
             logger.info(
-                f"🗜️ [FactStore Injection] Successfully queued/injected last {len(capped_history)} dialogue turns "
-                f"(~{injected_tokens} tok) into model context via inject_directive(speak_now=False)."
+                f"🗜️ [FactStore Injection] Recorded last {len(capped_history)} dialogue turns "
+                f"(~{injected_tokens} tok) in FactStore snapshot (silent; no unsolicited user turn sent)."
             )
             append_diagnostic_log(
                 "🗜️ FactStore Injected",
                 f"Restored last {len(capped_history)} turns (~{injected_tokens} tok) of verbatim transcript into context."
             )
         except Exception as e:
-            logger.error(f"❌ [FactStore Injection] Error sending directive: {e}")
+            logger.error(f"❌ [FactStore Injection] Error recording snapshot: {e}")
 
     async def _handle_msg_tool_call(self, message):
         self.response_identity.begin()

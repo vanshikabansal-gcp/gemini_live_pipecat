@@ -34,18 +34,51 @@ function transcriptMessage(role: Message["role"], text: string, metrics?: Messag
   };
 }
 
+const AMBIENT_LEVEL_V2_KEY = "voice_studio_ambient_level_v2";
+
+function loadInitialAmbientLevel(): number {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS.ambientLevel ?? 0.22;
+  try {
+    const storedV2 = window.localStorage.getItem(AMBIENT_LEVEL_V2_KEY);
+    if (storedV2 !== null) {
+      const parsed = parseFloat(storedV2);
+      if (Number.isFinite(parsed) && parsed >= 0.05 && parsed <= 0.60) {
+        return parsed;
+      }
+    }
+    // Migrate/reset any legacy stored settings in localStorage that had ambientLevel >= 0.40 down to 0.22
+    for (const legacyKey of ["voice-studio-settings", "voice_studio_settings", "studio_settings"]) {
+      const raw = window.localStorage.getItem(legacyKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && typeof parsed.ambientLevel === "number") {
+        if (parsed.ambientLevel >= 0.40) {
+          parsed.ambientLevel = 0.22;
+          window.localStorage.setItem(legacyKey, JSON.stringify(parsed));
+        } else if (parsed.ambientLevel >= 0.05) {
+          return parsed.ambientLevel;
+        }
+      }
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return DEFAULT_SETTINGS.ambientLevel ?? 0.22;
+}
+
 /**
  * Owns a voice conversation: connection lifecycle, transcript, and the
  * per-turn telemetry the studio displays. The components below it are
  * presentational -- they read this and call back into it.
  */
 export function useVoiceSession() {
-  const [settings, setSettings] = useState<SessionSettings>({
+  const [settings, setSettings] = useState<SessionSettings>(() => ({
     ...DEFAULT_SETTINGS,
+    ambientLevel: loadInitialAmbientLevel(),
     contextCompression: true,
     contextCompressionTokens: 5000,
     sessionId: newSessionId(),
-  });
+  }));
   const [phase, setPhase] = useState<Phase>("idle");
   const [source, setSource] = useState<"backend" | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -561,8 +594,16 @@ export function useVoiceSession() {
   const updateBool = (key: keyof SessionSettings, value: boolean) =>
     setSettings((current) => ({ ...current, [key]: value }));
 
-  const updateNumber = (key: keyof SessionSettings, value: number) =>
+  const updateNumber = (key: keyof SessionSettings, value: number) => {
+    if (key === "ambientLevel" && typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(AMBIENT_LEVEL_V2_KEY, String(value));
+      } catch {
+        // Ignore storage write errors
+      }
+    }
     setSettings((current) => ({ ...current, [key]: value }));
+  };
 
   const copyTranscript = async () => {
     try {

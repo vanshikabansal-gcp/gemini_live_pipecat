@@ -18,7 +18,7 @@ export default function ConversationStage({
   const {
     active, custom, endSession, engineName, muted, persona, phase,
     reduced, session, setMuted, sound, source, startBackend,
-    toggleSound, track, settings, updateBool, update,
+    toggleSound, track, settings, updateBool, update, updateNumber,
   } = studio;
 
   const isAvatarMode = isAvatarActive(settings);
@@ -100,21 +100,66 @@ export default function ConversationStage({
             </span>
           </button>}
           {ambienceLabel && (
-            <button
-              type="button"
-              onClick={() => {
-                const next = !(settings.ambientNoise ?? true);
-                updateBool("ambientNoise", next);
-                session.current?.setAmbience?.(next, settings.ambientLevel);
-              }}
-              className={`stage-avatar-toggle-chip ${ambienceOn ? "active" : ""}`}
-              title="Toggle natural background call/room ambience so the conversation feels organic"
+            <div
+              className="stage-ambience-control-group"
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
             >
-              <Waves size={13} />
-              <span>
-                {ambienceOn ? `${ambienceLabel}: ON` : `${ambienceLabel}: Off`}
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !(settings.ambientNoise ?? true);
+                  updateBool("ambientNoise", next);
+                  session.current?.setAmbience?.(next, settings.ambientLevel ?? 0.22);
+                }}
+                className={`stage-avatar-toggle-chip ${ambienceOn ? "active" : ""}`}
+                title="Toggle natural background call/room ambience so the conversation feels organic"
+              >
+                <Waves size={13} />
+                <span>
+                  {ambienceOn ? `${ambienceLabel}: ON` : `${ambienceLabel}: Off`}
+                </span>
+              </button>
+              {ambienceOn && (
+                <label
+                  className="stage-ambience-slider-wrap"
+                  title={`Adjust ${ambienceLabel.toLowerCase()} volume (${Math.round((settings.ambientLevel ?? 0.22) * 100)}%)`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    background: "rgba(255, 255, 255, 0.04)",
+                    border: "1px solid rgba(255, 255, 255, 0.12)",
+                    fontSize: "10.5px",
+                    color: "#94a3b8",
+                  }}
+                >
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={0.60}
+                    step={0.02}
+                    value={settings.ambientLevel ?? 0.22}
+                    aria-label={`${ambienceLabel} volume`}
+                    onChange={(e) => {
+                      const nextLevel = parseFloat(e.target.value);
+                      updateNumber("ambientLevel", nextLevel);
+                      session.current?.setAmbience?.(true, nextLevel);
+                    }}
+                    style={{
+                      width: "58px",
+                      height: "4px",
+                      accentColor: "#38bdf8",
+                      cursor: "pointer",
+                    }}
+                  />
+                  <span style={{ fontVariantNumeric: "tabular-nums", minWidth: "26px", textAlign: "right" }}>
+                    {Math.round((settings.ambientLevel ?? 0.22) * 100)}%
+                  </span>
+                </label>
+              )}
+            </div>
           )}
         </div>
         <div className="your-role">

@@ -1,17 +1,13 @@
 /**
  * Realistic, continuous background ambience generator for natural voice conversations.
  *
- * Synthesizes an authentic, normalized 12-second multi-layered acoustic floor directly
- * on the session's WebAudio graph:
- * - "call-center" (for Riya from Asian Paints, Meera, Ananya, Pragya, Abhay, etc.):
- *   Authentic Indian Customer Call Centre floor featuring:
- *     1. 5 distant virtual call-centre agents speaking in neighbouring cubicles
- *        (formant-shaped human vocal babble with natural syllabic 4-5 Hz cadence,
- *        pitch prosody glides, and conversational phrase/pause gating).
- *     2. Soft mechanical CRM keyboard typing bursts (agent typing pincodes/notes).
- *     3. Occasional muffled distant ACD headset/telephone queue soft-chime.
- *     4. Warm telephony/office room air floor (200-2800 Hz).
- * - "vedic" (for Astrotalk Pandit Raghavendra Ji):
+ * Supports two persona-specific acoustic profiles:
+ * - "call-center" (exclusively for Riya from Asian Paints BHPS):
+ *   Streams `/ambience/call-center.mp3` — a real 20.0s seamless multi-speaker Indian
+ *   Customer Call Centre loop synthesized from 6 Google Cloud `en-IN-Chirp3-HD` and
+ *   `hi-IN-Chirp3-HD` voices with cubicle bandpass and room acoustics, cached across
+ *   sessions and shaped through a warm 220–2200 Hz background filter.
+ * - "vedic" (exclusively for Astrotalk Pandit Raghavendra Ji):
  *   Sacred Vedic consultation chamber featuring warm room tone, soothing 136.1 Hz
  *   (C# Om) Sa-Pa-Sa Tanpura string resonance, and soft distant temple bell (ghanti) chimes.
  */
@@ -24,6 +20,37 @@ export type AmbientNoiseController = {
   setSpeaking: (speaking: boolean) => void;
   stop: () => void;
 };
+
+const CALL_CENTER_MP3_URL = "/ambience/call-center.mp3";
+let cachedCallCenterMp3Bytes: ArrayBuffer | null = null;
+let inflightCallCenterFetch: Promise<ArrayBuffer | null> | null = null;
+let cachedCallCenterDecoded: { sampleRate: number; buffer: AudioBuffer } | null = null;
+
+function fetchCallCenterMp3Bytes(): Promise<ArrayBuffer | null> {
+  if (cachedCallCenterMp3Bytes) {
+    return Promise.resolve(cachedCallCenterMp3Bytes);
+  }
+  if (inflightCallCenterFetch) {
+    return inflightCallCenterFetch;
+  }
+  if (typeof window === "undefined" || typeof fetch === "undefined") {
+    return Promise.resolve(null);
+  }
+  inflightCallCenterFetch = fetch(CALL_CENTER_MP3_URL)
+    .then((res) => (res.ok ? res.arrayBuffer() : null))
+    .then((buf) => {
+      if (buf && buf.byteLength > 0) {
+        cachedCallCenterMp3Bytes = buf;
+        return buf;
+      }
+      return null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      inflightCallCenterFetch = null;
+    });
+  return inflightCallCenterFetch;
+}
 
 export function resolveAmbienceProfile(personaId?: string): AmbienceProfile | null {
   const id = (personaId || "").trim().toLowerCase();
@@ -43,6 +70,8 @@ export function resolveAmbienceProfile(personaId?: string): AmbienceProfile | nu
     id === "riya" ||
     id === "bajaj-bhps"
   ) {
+    // Pre-warm the MP3 cache as soon as Riya's persona is resolved in the UI.
+    void fetchCallCenterMp3Bytes();
     return "call-center";
   }
   return null;
@@ -277,6 +306,24 @@ function buildAmbienceBuffer(ctx: AudioContext, profile: AmbienceProfile): Audio
   return buffer;
 }
 
+async function loadCallCenterAudioBuffer(ctx: AudioContext): Promise<AudioBuffer> {
+  if (cachedCallCenterDecoded && cachedCallCenterDecoded.sampleRate === ctx.sampleRate) {
+    return cachedCallCenterDecoded.buffer;
+  }
+  const rawBytes = await fetchCallCenterMp3Bytes();
+  if (rawBytes && ctx.state !== "closed") {
+    try {
+      // Slice a fresh copy because decodeAudioData detaches the input ArrayBuffer.
+      const decoded = await ctx.decodeAudioData(rawBytes.slice(0));
+      cachedCallCenterDecoded = { sampleRate: ctx.sampleRate, buffer: decoded };
+      return decoded;
+    } catch {
+      // Fall back to synthesized buffer if decoding fails in an offline/test environment.
+    }
+  }
+  return buildAmbienceBuffer(ctx, "call-center");
+}
+
 /**
  * Start continuous natural background ambience connected to the call's output destination.
  */
@@ -299,54 +346,68 @@ export function startAmbientNoise(
     };
   }
   let isEnabled = options.enabled ?? true;
-  // Default level 0.55 -> listening amplitude ~0.095 (-20 dBFS peak, ~-27 dBFS RMS),
-  // clearly audible as a realistic customer call-center floor behind Riya!
-  let userLevel = Math.max(0, Math.min(1, options.level ?? 0.55));
+  // Default level 0.22 -> subtle, natural distant call-centre voices in neighbouring cubicles
+  // (~0.031 listening gain, ~0.017 when Riya is speaking) without overpowering the bot.
+  let userLevel = Math.max(0, Math.min(1, options.level ?? 0.22));
   let isSpeaking = false;
+  let stopped = false;
+  let source: AudioBufferSourceNode | null = null;
 
-  const buffer = buildAmbienceBuffer(ctx, profile);
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-
-  // Telephony / call-center acoustic bandpass shaping (220 Hz - 2700 Hz for call-center)
+  // Warm background bandpass shaping (220 Hz - 2200 Hz for call-center; 95 Hz - 2100 Hz for vedic)
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
-  highpass.frequency.value = profile === "vedic" ? 95 : 210;
+  highpass.frequency.value = profile === "vedic" ? 95 : 220;
   highpass.Q.value = 0.6;
 
   const lowpass = ctx.createBiquadFilter();
   lowpass.type = "lowpass";
-  lowpass.frequency.value = profile === "vedic" ? 2100 : 2650;
+  lowpass.frequency.value = profile === "vedic" ? 2100 : 2200;
   lowpass.Q.value = 0.7;
 
   const gainNode = ctx.createGain();
 
   const computeTargetGain = () => {
     if (!isEnabled) return 0;
-    // Since buffer is peak-normalized to 0.85:
-    // At userLevel = 0.55, baseGain = 0.115 (peaks ~0.10, RMS ~0.032 -> realistic call-center floor!)
-    const baseGain = userLevel * (profile === "call-center" ? 0.21 : 0.16);
-    // Keep 75% of the call-center floor audible WHILE Riya is speaking so you hear the
-    // customer call center right behind her voice, and 100% during pauses/listening!
-    return isSpeaking ? baseGain * 0.75 : baseGain;
+    const baseGain = userLevel * (profile === "call-center" ? 0.14 : 0.10);
+    return isSpeaking ? baseGain * 0.55 : baseGain;
   };
 
   gainNode.gain.setValueAtTime(computeTargetGain(), ctx.currentTime);
 
-  source.connect(highpass);
   highpass.connect(lowpass);
   lowpass.connect(gainNode);
   gainNode.connect(destination);
 
-  try {
-    source.start(0);
-  } catch {
-    // Ignore if context is already closed
+  const attachAndStartBuffer = (buffer: AudioBuffer) => {
+    if (stopped || ctx.state === "closed") return;
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    node.loop = true;
+    node.connect(highpass);
+    try {
+      node.start(0);
+      source = node;
+    } catch {
+      try {
+        node.disconnect();
+      } catch {
+        // Ignore
+      }
+    }
+  };
+
+  if (profile === "vedic") {
+    attachAndStartBuffer(buildAmbienceBuffer(ctx, "vedic"));
+  } else if (cachedCallCenterDecoded && cachedCallCenterDecoded.sampleRate === ctx.sampleRate) {
+    attachAndStartBuffer(cachedCallCenterDecoded.buffer);
+  } else {
+    void loadCallCenterAudioBuffer(ctx).then((buffer) => {
+      attachAndStartBuffer(buffer);
+    });
   }
 
   const updateGainSmooth = (timeConstant = 0.12) => {
-    if (ctx.state === "closed") return;
+    if (stopped || ctx.state === "closed") return;
     try {
       gainNode.gain.setTargetAtTime(computeTargetGain(), ctx.currentTime, timeConstant);
     } catch {
@@ -369,13 +430,21 @@ export function startAmbientNoise(
       updateGainSmooth(speaking ? 0.08 : 0.20);
     },
     stop() {
-      try {
-        source.stop();
-      } catch {
-        // Already stopped
+      stopped = true;
+      if (source) {
+        try {
+          source.stop();
+        } catch {
+          // Already stopped
+        }
+        try {
+          source.disconnect();
+        } catch {
+          // Ignore
+        }
+        source = null;
       }
       try {
-        source.disconnect();
         highpass.disconnect();
         lowpass.disconnect();
         gainNode.disconnect();

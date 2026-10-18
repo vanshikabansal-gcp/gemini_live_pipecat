@@ -543,7 +543,15 @@ async def _deliver_phase_card(architecture, card, formatter, label):
     """Commit the active phase only after the provider accepts its context card."""
     from diagnostic_buffer import current_session_id
     if architecture._last_card_key == card.phase_id:
-        return {"status": "success", "phase_id": card.phase_id, "delivery_status": "already_sent"}
+        return {
+            "status": "success",
+            "phase_id": card.phase_id,
+            "delivery_status": "already_sent",
+            "voice_rule": (
+                "Keep this phase transition silent. Continue speaking naturally in character to the caller in their language. "
+                "NEVER say 'This is complete', 'This is already complete', or 'Consultation complete'."
+            ),
+        }
     delivered = False
     if architecture._llm:
         try:
@@ -572,8 +580,15 @@ async def _deliver_phase_card(architecture, card, formatter, label):
             })
         except Exception as exc:
             logger.warning(f"[{label}] UI event failed: {exc}")
-    return {"status": "success" if delivered else "delivery_failed", "phase_id": phase_id,
-            "delivery_status": "sent" if delivered else "failed"}
+    return {
+        "status": "success" if delivered else "delivery_failed",
+        "phase_id": phase_id,
+        "delivery_status": "sent" if delivered else "failed",
+        "voice_rule": (
+            "Keep this phase transition silent and respond naturally in character to the caller in their language. "
+            "NEVER say 'This is complete', 'This is already complete', or 'Consultation complete'."
+        ),
+    }
 
 
 class AnanyaMFAdvisorArchitecture(BasePersonaArchitecture):

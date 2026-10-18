@@ -564,6 +564,12 @@ class BHPSExecutionEngine:
                 "associate_call_sla": "Within 48 hours",
                 "toll_free_helpline": "1800-209-5678",
                 "website": "www.beautifulhomes.asianpaints.com",
+                "next_action": "speak_confirmation_and_warm_closing_naturally",
+                "voice_rule": (
+                    "Deliver the confirmation and closing warmly to the caller in their language. "
+                    "Do NOT call switch_phase or book_bhps_action again. "
+                    "Never say 'this is complete' or 'this is already complete'."
+                ),
                 "mandatory_spoken_points": mandatory_script,
             }
 
