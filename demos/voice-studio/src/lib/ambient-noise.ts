@@ -25,7 +25,7 @@ export type AmbientNoiseController = {
   stop: () => void;
 };
 
-export function resolveAmbienceProfile(personaId?: string): AmbienceProfile {
+export function resolveAmbienceProfile(personaId?: string): AmbienceProfile | null {
   const id = (personaId || "").trim().toLowerCase();
   if (
     id === "astrotalk-panditji" ||
@@ -36,7 +36,16 @@ export function resolveAmbienceProfile(personaId?: string): AmbienceProfile {
   ) {
     return "vedic";
   }
-  return "call-center";
+  if (
+    id === "asian-paints" ||
+    id === "asian_paints" ||
+    id === "bhps" ||
+    id === "riya" ||
+    id === "bajaj-bhps"
+  ) {
+    return "call-center";
+  }
+  return null;
 }
 
 type VirtualAgentSpec = {
@@ -281,6 +290,14 @@ export function startAmbientNoise(
   } = {},
 ): AmbientNoiseController {
   const profile = resolveAmbienceProfile(options.personaId);
+  if (!profile) {
+    return {
+      setEnabled() {},
+      setLevel() {},
+      setSpeaking() {},
+      stop() {},
+    };
+  }
   let isEnabled = options.enabled ?? true;
   // Default level 0.55 -> listening amplitude ~0.095 (-20 dBFS peak, ~-27 dBFS RMS),
   // clearly audible as a realistic customer call-center floor behind Riya!

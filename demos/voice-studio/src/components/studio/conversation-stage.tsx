@@ -24,7 +24,12 @@ export default function ConversationStage({
   const isAvatarMode = isAvatarActive(settings);
   const ambienceOn = settings.ambientNoise ?? true;
   const ambienceProfile = resolveAmbienceProfile(settings.personaId);
-  const ambienceLabel = ambienceProfile === "vedic" ? "Vedic Ambience" : "Call Centre Noise";
+  const ambienceLabel =
+    ambienceProfile === "vedic"
+      ? "Vedic Ambience"
+      : ambienceProfile === "call-center"
+        ? "Call Centre Noise"
+        : null;
   const activeAvatarChar =
     AVATAR_CHARACTERS.find((c) => c.id === (settings.avatarName || "auto")) ?? AVATAR_CHARACTERS[0];
 
@@ -94,21 +99,23 @@ export default function ConversationStage({
                 : "3.8 Avatar: Off"}
             </span>
           </button>}
-          <button
-            type="button"
-            onClick={() => {
-              const next = !(settings.ambientNoise ?? true);
-              updateBool("ambientNoise", next);
-              session.current?.setAmbience?.(next, settings.ambientLevel);
-            }}
-            className={`stage-avatar-toggle-chip ${ambienceOn ? "active" : ""}`}
-            title="Toggle natural background call/room ambience so the conversation feels organic"
-          >
-            <Waves size={13} />
-            <span>
-              {ambienceOn ? `${ambienceLabel}: ON` : `${ambienceLabel}: Off`}
-            </span>
-          </button>
+          {ambienceLabel && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = !(settings.ambientNoise ?? true);
+                updateBool("ambientNoise", next);
+                session.current?.setAmbience?.(next, settings.ambientLevel);
+              }}
+              className={`stage-avatar-toggle-chip ${ambienceOn ? "active" : ""}`}
+              title="Toggle natural background call/room ambience so the conversation feels organic"
+            >
+              <Waves size={13} />
+              <span>
+                {ambienceOn ? `${ambienceLabel}: ON` : `${ambienceLabel}: Off`}
+              </span>
+            </button>
+          )}
         </div>
         <div className="your-role">
           <span className="eyebrow">{custom ? "CUSTOM SESSION" : "YOUR ROLE"}</span>
