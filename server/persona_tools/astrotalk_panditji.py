@@ -410,7 +410,8 @@ class AstrotalkPanditjiEngine:
             "next_script_instruction": (
                 "Explain the astrological reason (citing the house and current Dasha/Gochar transit) and the exact "
                 "favorable timeline in 1-2 warm, uplifting sentences. Then ask if they would like simple Saatvik "
-                "Vedic Upay (remedies) to strengthen this yoga."
+                "Vedic Upay (remedies) to strengthen this yoga, and WAIT for the caller to reply before calling "
+                "`recommend_vedic_remedies`."
             ),
         }
 
@@ -479,7 +480,8 @@ class AstrotalkPanditjiEngine:
                     + (f"2. Mention optional gemstone/Rudraksha guidance ({gemstone}). " if include_gemstone else "")
                     + (f"3. Confirm {pooja_name} Sankalp for {pooja_date} (Ref {consultation_id}). " if include_epooja else "")
                     + f"4. Inform the caller that their full Janam Kundli PDF and written Upay summary ({consultation_id}) "
-                    "have been sent to their Astrotalk chat, and bless them warmly ('ईश्वर आपकी सभी मनोकामनाएं पूर्ण करें, शुभम् भवतु!')."
+                    "have been sent to their Astrotalk chat, and bless them warmly ('ईश्वर आपकी सभी मनोकामनाएं पूर्ण करें, शुभम् भवतु!'). "
+                    "Do NOT say 'This is complete' or 'This is already complete'."
                 ),
             }
 

@@ -1,9 +1,10 @@
 import type { ComponentType } from "react";
-import { Mic, MicOff, Square, Volume2, VolumeX, Video } from "lucide-react";
+import { Mic, MicOff, Square, Volume2, VolumeX, Video, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { WaveProps } from "@/lib/studio-types";
 import type { VoiceStudio } from "@/hooks/use-voice-session";
 import { AVATAR_CHARACTERS, isAvatarActive } from "@/lib/voice-session";
+import { resolveAmbienceProfile } from "@/lib/ambient-noise";
 import PersonaAvatar from "./persona-avatar";
 
 /** The agent's stage: waveform, call controls and persona role. */
@@ -17,10 +18,13 @@ export default function ConversationStage({
   const {
     active, custom, endSession, engineName, muted, persona, phase,
     reduced, session, setMuted, sound, source, startBackend,
-    toggleSound, track, settings, updateBool, update, chooseEngine,
+    toggleSound, track, settings, updateBool, update,
   } = studio;
 
   const isAvatarMode = isAvatarActive(settings);
+  const ambienceOn = settings.ambientNoise ?? true;
+  const ambienceProfile = resolveAmbienceProfile(settings.personaId);
+  const ambienceLabel = ambienceProfile === "vedic" ? "Vedic Ambience" : "Call Ambience";
   const activeAvatarChar =
     AVATAR_CHARACTERS.find((c) => c.id === (settings.avatarName || "auto")) ?? AVATAR_CHARACTERS[0];
 
@@ -90,6 +94,21 @@ export default function ConversationStage({
                 : "3.8 Avatar: Off"}
             </span>
           </button>}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !(settings.ambientNoise ?? true);
+              updateBool("ambientNoise", next);
+              session.current?.setAmbience?.(next, settings.ambientLevel);
+            }}
+            className={`stage-avatar-toggle-chip ${ambienceOn ? "active" : ""}`}
+            title="Toggle natural background call/room ambience so the conversation feels organic"
+          >
+            <Waves size={13} />
+            <span>
+              {ambienceOn ? `${ambienceLabel}: ON` : `${ambienceLabel}: Off`}
+            </span>
+          </button>
         </div>
         <div className="your-role">
           <span className="eyebrow">{custom ? "CUSTOM SESSION" : "YOUR ROLE"}</span>

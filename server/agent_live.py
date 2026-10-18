@@ -1100,11 +1100,19 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
 
             # Detect compression:
             # 1. Effective context tokens reached or exceeded the configured threshold
-            # 2. OR prompt tokens dropped significantly (>150 tokens) while turn count > 1 (signature of FIFO eviction compaction)
+            # 2. OR prompt tokens dropped significantly (>500 tokens) from >= threshold on a normal
+            #    audio turn (not a tool-call continuation step where audio tokens are omitted).
+            audio_in_tokens = int(prompt_details.get("audio", 0) or 0)
             compression_detected = False
             if effective_context_tot >= threshold and not getattr(self, '_context_compression_triggered', False):
                 compression_detected = True
-            elif current_prompt > 0 and last_prompt > 1000 and current_prompt < (last_prompt - 150):
+            elif (
+                not self._tools_in_flight()
+                and audio_in_tokens > 0
+                and current_prompt > 0
+                and last_prompt >= threshold
+                and current_prompt < (last_prompt - 500)
+            ):
                 compression_detected = True
                 logger.info(f"🗜️ [Context Compression] Compaction detected! Prompt tokens contracted from {last_prompt} to {current_prompt}")
 
@@ -1133,7 +1141,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
                 # FactStore: Immediately inject verbatim dialogue transcription logs back into model context
                 await self._inject_transcription_logs()
 
-            if current_prompt > 0:
+            if current_prompt > 0 and audio_in_tokens > 0 and not self._tools_in_flight():
                 self._last_prompt_tokens = current_prompt
 
     async def _inject_transcription_logs(self):
@@ -1161,12 +1169,11 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         turn_notice = f"last {len(capped_history)}" if len(history) > 5 else "all"
         prompt_card = (
             f"[CONVERSATION_TRANSCRIPT_LOG]\n"
-            f"The following is the verbatim transcript log of the {turn_notice} dialogue turns in this session:\n"
+            f"The following is the background transcript log of the {turn_notice} dialogue turns in this session:\n"
             f"{injected_transcript}\n\n"
             f"CRITICAL INSTRUCTIONS:\n"
-            f"• Seamlessly continue the conversation with the user from the latest turn.\n"
             f"• Retain full awareness of all customer details, numbers, preferences, and agreements stated in this transcript.\n"
-            f"• DO NOT repeat greetings, do NOT re-introduce yourself, and do NOT verbally acknowledge this transcript update."
+            f"• Wait for the user to speak next. DO NOT generate an unsolicited response, do NOT repeat greetings, do NOT re-introduce yourself, and NEVER say meta-phrases like 'This is complete' or 'This is already complete'."
         )
 
         injected_tokens = estimate_tokens(injected_transcript)
@@ -1182,24 +1189,17 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         )
 
         try:
-            content = Content(
-                role="user",
-                parts=[Part(text=prompt_card)]
-            )
-            await self._session.send_client_content(
-                turns=[content],
-                turn_complete=False
-            )
+            await self.inject_directive(prompt_card, tag="FactStore", speak_now=False)
             logger.info(
-                f"🗜️ [FactStore Injection] Successfully injected last {len(capped_history)} dialogue turns "
-                f"(~{injected_tokens} tok) into model context via send_client_content(turn_complete=False)."
+                f"🗜️ [FactStore Injection] Successfully queued/injected last {len(capped_history)} dialogue turns "
+                f"(~{injected_tokens} tok) into model context via inject_directive(speak_now=False)."
             )
             append_diagnostic_log(
                 "🗜️ FactStore Injected",
                 f"Restored last {len(capped_history)} turns (~{injected_tokens} tok) of verbatim transcript into context."
             )
         except Exception as e:
-            logger.error(f"❌ [FactStore Injection] Error sending client_content: {e}")
+            logger.error(f"❌ [FactStore Injection] Error sending directive: {e}")
 
     async def _handle_msg_tool_call(self, message):
         self.response_identity.begin()
@@ -1727,7 +1727,8 @@ def compose_live_system_prompt(
             "You MUST speak with a full, natural, unmistakable INDIAN ACCENT (en-IN) at all times, "
             "including when speaking English (never use an American or British accent). "
             "Seamlessly switch between Indian English (en-IN), Hindi (hi-IN), Hinglish, and Marathi (mr-IN) "
-            "to match the caller's language on every turn."
+            "to match the caller's language on every turn. "
+            "NEVER output meta-status phrases like 'This is complete' or 'This is already complete'."
         )
     if norm_pid == "astrotalk-panditji":
         effective_lang = "hi-IN" if language == "en-US" else language
@@ -1737,9 +1738,10 @@ def compose_live_system_prompt(
             "You MUST speak with a 100% pure, warm, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times, "
             "including when speaking English (never use an American or British accent). "
             "Seamlessly converse in and switch across all Indian languages (Hindi, Hinglish, Indian English, Marathi, "
-            "Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi, and Sanskrit shlokas) to match the caller."
+            "Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi, and Sanskrit shlokas) to match the caller. "
+            "NEVER output meta-status phrases like 'This is complete' or 'This is already complete'."
         )
-    return f"{base}\n\nIMPORTANT: You must converse in {language} language."
+    return f"{base}\n\nIMPORTANT: You must converse in {language} language. Never say meta-status phrases like 'This is complete' or 'This is already complete'."
 
 
 def resolve_live_vad_mode(vad: bool = True, vad_mode: Optional[str] = None) -> tuple[str, bool, bool]:

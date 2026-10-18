@@ -156,6 +156,10 @@ export type SessionSettings = {
   avatarName?: string;
   /** Optional base64 data URI for Custom Portrait upload (`customized_avatar`). */
   avatarCustomImage?: string;
+  /** Whether subtle natural background ambience is mixed into the call audio. Defaults to true. */
+  ambientNoise?: boolean;
+  /** Relative background ambience level (0..1). Defaults to 0.42. */
+  ambientLevel?: number;
   /**
    * Identifies this browser's session to the backend diagnostics buffer.
    *
@@ -219,6 +223,8 @@ export const DEFAULT_SETTINGS: SessionSettings = {
   avatarEnabled: false,
   avatarName: "auto",
   avatarCustomImage: "",
+  ambientNoise: true,
+  ambientLevel: 0.42,
   sessionId: "",
 };
 

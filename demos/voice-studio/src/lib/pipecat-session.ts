@@ -1,6 +1,7 @@
 import { createDiagnosticAccess, diagnosticHeaders } from "./session-diagnostics";
 import { buildConnectRequest, isAvatarActive, validateSocketUrl, type SessionSettings } from "./voice-session";
 import { calculateTurnCost, type UsageTokenData } from "./pricing";
+import { startAmbientNoise, type AmbientNoiseController } from "./ambient-noise";
 
 type Phase = "idle" | "connecting" | "listening" | "thinking" | "speaking";
 
@@ -38,6 +39,7 @@ export type LiveSession = {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   setMic: (enabled: boolean) => void;
+  setAmbience?: (enabled: boolean, level?: number) => void;
 };
 
 /** Connects to this repository's /connect + custom protobuf message contract.
@@ -73,6 +75,7 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
   let context: AudioContext | null = null;
   let destination: MediaStreamAudioDestinationNode | null = null;
   let analyser: AnalyserNode | null = null;
+  let ambience: AmbientNoiseController | null = null;
   let nextAudioAt = 0;
 
   // Pipecat's stock WebSocket player plays directly to the speaker and does not
@@ -92,16 +95,24 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
       source.onended = () => { sources.delete(source); source.disconnect(); };
       nextAudioAt = Math.max(context.currentTime, nextAudioAt);
       source.start(nextAudioAt); nextAudioAt += buffer.duration;
+      ambience?.setSpeaking(true);
       events.onPhase("speaking");
       if (lastUserAt !== null) { events.onLatency(performance.now() - lastUserAt); lastUserAt = null; }
       if (speakingTimer) clearTimeout(speakingTimer);
-      speakingTimer = setTimeout(() => { if (!stopped) { events.onPhase("listening"); events.onLevel(0); } }, Math.max(150, (nextAudioAt - context.currentTime) * 1000 + 100));
+      speakingTimer = setTimeout(() => {
+        if (!stopped) {
+          ambience?.setSpeaking(false);
+          events.onPhase("listening");
+          events.onLevel(0);
+        }
+      }, Math.max(150, (nextAudioAt - context.currentTime) * 1000 + 100));
       return pcm;
     }
     async userStartedSpeaking() {
       for (const source of sources) { try { source.stop(); } catch { /* Already ended. */ } source.disconnect(); }
       sources.clear(); nextAudioAt = 0;
       if (speakingTimer) clearTimeout(speakingTimer);
+      ambience?.setSpeaking(false);
       events.onLevel(0);
     }
   }
@@ -113,6 +124,7 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
     stopped = true; controller.abort();
     if (levelTimer) clearInterval(levelTimer);
     if (speakingTimer) clearTimeout(speakingTimer);
+    ambience?.stop(); ambience = null;
     await media.userStartedSpeaking();
     if (initialized) {
       try { transport.tracks().local?.audio?.stop(); } catch { /* Initialization may be incomplete. */ }
@@ -318,6 +330,11 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
       context = new AudioContext({ sampleRate: 24000 });
       destination = context.createMediaStreamDestination();
       analyser = context.createAnalyser(); analyser.fftSize = 256; analyser.connect(destination);
+      ambience = startAmbientNoise(context, destination, {
+        personaId: settings.personaId,
+        enabled: settings.ambientNoise ?? true,
+        level: settings.ambientLevel ?? 0.42,
+      });
       await context.resume();
       initialized = true;
       try { await transport.initDevices(); }
@@ -361,5 +378,10 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
     },
     disconnect,
     setMic(enabled) { if (!stopped) transport.enableMic(enabled); },
+    setAmbience(enabled, level) {
+      if (stopped || !ambience) return;
+      ambience.setEnabled(enabled);
+      if (typeof level === "number") ambience.setLevel(level);
+    },
   };
 }
