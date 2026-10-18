@@ -24,7 +24,7 @@ export default function ConversationStage({
   const isAvatarMode = isAvatarActive(settings);
   const ambienceOn = settings.ambientNoise ?? true;
   const ambienceProfile = resolveAmbienceProfile(settings.personaId);
-  const ambienceLabel = ambienceProfile === "vedic" ? "Vedic Ambience" : "Call Ambience";
+  const ambienceLabel = ambienceProfile === "vedic" ? "Vedic Ambience" : "Call Centre Noise";
   const activeAvatarChar =
     AVATAR_CHARACTERS.find((c) => c.id === (settings.avatarName || "auto")) ?? AVATAR_CHARACTERS[0];
 

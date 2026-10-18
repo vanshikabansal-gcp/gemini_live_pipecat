@@ -224,7 +224,7 @@ export const DEFAULT_SETTINGS: SessionSettings = {
   avatarName: "auto",
   avatarCustomImage: "",
   ambientNoise: true,
-  ambientLevel: 0.42,
+  ambientLevel: 0.55,
   sessionId: "",
 };
 

@@ -333,7 +333,7 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
       ambience = startAmbientNoise(context, destination, {
         personaId: settings.personaId,
         enabled: settings.ambientNoise ?? true,
-        level: settings.ambientLevel ?? 0.42,
+        level: settings.ambientLevel ?? 0.55,
       });
       await context.resume();
       initialized = true;
