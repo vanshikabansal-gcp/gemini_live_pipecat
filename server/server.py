@@ -554,6 +554,10 @@ if client_dist_dir:
     if os.path.exists(personas_dir):
         app.mount("/personas", StaticFiles(directory=personas_dir), name="personas")
 
+    ambience_dir = os.path.join(client_dist_dir, "ambience")
+    if os.path.exists(ambience_dir):
+        app.mount("/ambience", StaticFiles(directory=ambience_dir), name="ambience")
+
     @app.get("/favicon.svg")
     async def read_favicon():
         fav_path = os.path.join(client_dist_dir, "favicon.svg")
