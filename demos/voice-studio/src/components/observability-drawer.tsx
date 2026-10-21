@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
-import { diagnosticHeaders } from "@/lib/session-diagnostics";
+import { diagnosticHeaders, hasDiagnosticAccess } from "@/lib/session-diagnostics";
 import {
   EMPTY_TOKEN_SPLIT,
   LIVE_RATE_CARDS,
@@ -126,6 +126,10 @@ export default function ObservabilityDrawer({
     let mounted = true;
 
     const fetchTelemetry = async () => {
+      if (!hasDiagnosticAccess(sessionId)) {
+        if (mounted) setTelemetryError(false);
+        return;
+      }
       try {
         const [logsRes, traceRes] = await Promise.allSettled([
           fetch(`${base}/api/logs?limit=500${scope}`, { headers: diagnosticHeaders(sessionId) }),
@@ -140,6 +144,9 @@ export default function ObservabilityDrawer({
           if (data.latency_summary) {
             setLatencySummary(data.latency_summary);
           }
+          setTelemetryError(false);
+        } else if (mounted && logsRes.status === "fulfilled" && logsRes.value.status === 403) {
+          // Session /connect handshake is still in flight; stay in "Waiting for session" state
           setTelemetryError(false);
         } else if (mounted) {
           setTelemetryError(true);
@@ -183,7 +190,9 @@ export default function ObservabilityDrawer({
   const aggregatedMetrics = useMemo(() => {
     const turns = latencySummary?.turns?.filter(r => r.stage === "turn" && r.turn_id > 0).length ?? 0;
     const interrupts = latencySummary?.turns?.filter(r => r.stage === "turn" && r.status === "interrupted").length ?? 0;
-    const tools = logs.filter(log => log.event_type === "Tool Output").length;
+    const toolOutputs = logs.filter(log => log.event_type === "Tool Output").length;
+    const toolStarts = logs.filter(log => log.event_type === "🛠️ Tool Call").length;
+    const tools = Math.max(toolOutputs, toolStarts);
     const providerUsage = latencySummary?.provider_usage;
     const backendTotalTokens = providerUsage?.total_token_count ?? 0;
 

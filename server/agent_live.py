@@ -329,6 +329,20 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
             await super()._handle_interruption()
         await super().broadcast_interruption(*args, **kwargs)
 
+    def _bind_live_output_turn(self):
+        """Bind _live_output_turn to the active user turn, or close an open speaking turn if server VAD responded first."""
+        if getattr(self, "_live_output_turn", None) is not None:
+            return
+        last_in = getattr(self, "_last_input_turn", None)
+        if last_in is not None and getattr(last_in, "status", None) is None:
+            self._live_output_turn = last_in
+            return
+        tracker = getattr(self, "_turn_tracker", None)
+        if tracker is not None and getattr(tracker, "speaking", False):
+            turn = tracker.stop(vad=False)
+            self._last_input_turn = turn
+            self._live_output_turn = turn
+
     def _begin_output(self):
         """Mark our response as active and bind it to its input turn.
 
@@ -343,8 +357,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         if user_idle is not None:
             user_idle._bot_speaking = True
             user_idle.last_activity = time.monotonic()
-        if getattr(self, "_live_output_turn", None) is None:
-            self._live_output_turn = getattr(self, "_last_input_turn", None)
+        self._bind_live_output_turn()
         self.response_identity.begin()
 
     async def _begin_avatar_output(self):
@@ -442,6 +455,15 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         await super()._handle_msg_model_turn(message)
 
     async def push_frame(self, frame, direction=FrameDirection.DOWNSTREAM):
+        if type(frame).__name__ == "FunctionCallResultFrame" and not getattr(frame, "_diag_logged", False):
+            frame._diag_logged = True
+            res_str = str(getattr(frame, "result", getattr(frame, "content", "")))
+            if len(res_str) > 150:
+                append_diagnostic_log("Tool Output", f"Result -> Model: {res_str[:150]}...")
+            else:
+                append_diagnostic_log("Tool Output", f"Result -> Model:\n{res_str}")
+            if getattr(self, "_frame_locked_tools", False):
+                self._release_tools("frame FunctionCallResultFrame")
         if isinstance(frame, OutputTransportMessageFrame) and isinstance(frame.message, dict):
             data = frame.message.get("data", {})
             if data.get("type") == "transcription" and data.get("participant", "").lower() != "user":
@@ -628,11 +650,13 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
             if not getattr(self, '_frame_locked_tools', False):
                 self._lock_tools(f"frame {frame_type_name}")
         elif frame_type_name == "FunctionCallResultFrame":
-            res_str = str(getattr(frame, 'result', getattr(frame, 'content', '')))
-            if len(res_str) > 150:
-                append_diagnostic_log("Tool Output", f"Result -> Model: {res_str[:150]}...")
-            else:
-                append_diagnostic_log("Tool Output", f"Result -> Model:\n{res_str}")
+            if not getattr(frame, "_diag_logged", False):
+                frame._diag_logged = True
+                res_str = str(getattr(frame, 'result', getattr(frame, 'content', '')))
+                if len(res_str) > 150:
+                    append_diagnostic_log("Tool Output", f"Result -> Model: {res_str[:150]}...")
+                else:
+                    append_diagnostic_log("Tool Output", f"Result -> Model:\n{res_str}")
             if getattr(self, '_frame_locked_tools', False):
                 self._release_tools(f"frame {frame_type_name}")
         elif frame_type_name == "FunctionCallCancelFrame":
@@ -822,8 +846,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
     async def _handle_msg_output_transcription(self, message):
         if getattr(self, "_awaiting_interrupted_turn_complete", False):
             return
-        if getattr(self, "_live_output_turn", None) is None:
-            self._live_output_turn = getattr(self, "_last_input_turn", None)
+        self._bind_live_output_turn()
         self.response_identity.begin()
         has_text = bool(message.server_content.output_transcription and message.server_content.output_transcription.text)
         if has_text:
@@ -1214,6 +1237,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         if hasattr(message.tool_call, 'function_calls'):
             for fc in message.tool_call.function_calls:
                  tool_calls.append({"name": fc.name, "args": fc.args})
+                 append_diagnostic_log("🛠️ Tool Call", f"{fc.name}({fc.args})")
         await self.push_frame(OutputTransportMessageFrame(message={
             "label": "rtvi-ai",
             "type": "server-message",
@@ -1558,9 +1582,12 @@ class StartTriggerProcessor(FrameProcessor):
                         elif self.language == "hi-IN":
                             greeting_text = "नमस्ते रिया जी!"
                         else:
-                            greeting_text = "नमस्ते रिया जी! Hello, please speak in your natural Indian accent."
+                            greeting_text = "Namaste Riya ji!"
                     elif norm_pid == "astrotalk-panditji":
-                        greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण! Please speak in your pure Indian Panditji accent."
+                        if self.language and self.language.startswith("en"):
+                            greeting_text = "Pranam Panditji! Jai Shri Krishna ji!"
+                        else:
+                            greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण!"
                     else:
                         greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
                     logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
@@ -1732,8 +1759,9 @@ def compose_live_system_prompt(
             f"IMPORTANT: Primary language setting is {effective_lang}. "
             "You MUST speak with a full, natural, unmistakable INDIAN ACCENT (en-IN) at all times, "
             "including when speaking English (never use an American or British accent). "
-            "Seamlessly switch between Indian English (en-IN), Hindi (hi-IN), Hinglish, and Marathi (mr-IN) "
-            "to match the caller's language on every turn. "
+            "SINGLE-LANGUAGE RULE: Reply ONLY in the single language the caller is currently speaking "
+            "(if they speak Hindi, reply 100% in Hindi; if they speak English, reply 100% in Indian English; "
+            "if they speak Marathi, reply 100% in Marathi — never repeat or translate your reply into a second language). "
             "NEVER output meta-status phrases like 'This is complete' or 'This is already complete'."
         )
     if norm_pid == "astrotalk-panditji":
@@ -1741,10 +1769,12 @@ def compose_live_system_prompt(
         return (
             f"{base}\n\n"
             f"IMPORTANT: Primary language setting is {effective_lang}. "
-            "You MUST speak with a 100% pure, warm, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times, "
-            "including when speaking English (never use an American or British accent). "
-            "Seamlessly converse in and switch across all Indian languages (Hindi, Hinglish, Indian English, Marathi, "
-            "Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi, and Sanskrit shlokas) to match the caller. "
+            "You MUST speak with a 100% pure, warm, unmistakable INDIAN PANDITJI ACCENT (hi-IN / en-IN) at all times. "
+            "STRICT SINGLE-LANGUAGE MIRRORING RULE: Reply ONLY in the single language the caller is speaking right now. "
+            "NEVER speak in Hindi and then translate/repeat in English (or vice-versa) in the same turn. "
+            "When the caller speaks English, reply 100% in natural INDIAN ENGLISH (en-IN) with warm 'ji' and Indian cadence (never American/British accent). "
+            "When the caller speaks Hindi or any other Indian language (Marathi, Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi), reply 100% in that exact language only. "
+            "When chanting Vedic mantras or shlokas, recite them in pure SHUDDH DEVANAGARI SANSKRIT (शुद्ध वैदिक संस्कृत उच्चारण) with slow, resonant, unhurried pauses (...). "
             "NEVER output meta-status phrases like 'This is complete' or 'This is already complete'."
         )
     return f"{base}\n\nIMPORTANT: You must converse in {language} language. Never say meta-status phrases like 'This is complete' or 'This is already complete'."
@@ -2039,10 +2069,10 @@ async def run_agent_live(
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
 
     canonical_persona_id = persona_identity.normalize_persona_id(persona_id)
-    if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede")):
-        voice = "Kore"
-    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore", "Charon")):
-        voice = "Puck"
+    if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore")):
+        voice = "Despina"
+    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore", "Charon", "Puck")):
+        voice = "Sulafat"
 
     gender = voice_profiles.voice_gender(voice) or "female"
     if canonical_persona_id == "astrotalk-panditji" and language == "en-US":

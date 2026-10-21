@@ -40,34 +40,29 @@ except ImportError:
 
 generate_janam_kundli_schema = types.FunctionDeclaration(
     name="generate_janam_kundli",
-    description=(
-        "Calculate the caller's Vedic Janam Kundli (or Prashna Kundli if birth time is unknown) on Astrotalk. "
-        "Returns Lagna (Ascendant), Chandra Rashi (Moon Sign), Janam Nakshatra & Pada, current Vimshottari "
-        "Mahadasha & Antardasha, key planetary placements across houses, active Yogas (Gajakesari, Budhaditya, "
-        "Raj Yoga), and Dosha status (Manglik / Shani Sade Sati)."
-    ),
+    description="Calculate Vedic Janam/Prashna Kundli (Lagna, Rashi, Nakshatra, Mahadasha, Yogas, Dosha).",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "caller_name": types.Schema(
                 type=types.Type.STRING,
-                description="Caller's name if shared (optional, e.g., 'Rahul', 'Priya').",
+                description="Caller name if shared.",
             ),
             "birth_date": types.Schema(
                 type=types.Type.STRING,
-                description="Date of birth (e.g., '15 August 1995', '12-03-1992', or 'unknown' for Prashna Kundli).",
+                description="Date of birth or 'unknown' for Prashna Kundli.",
             ),
             "birth_time": types.Schema(
                 type=types.Type.STRING,
-                description="Time of birth (e.g., '10:30 AM', '7:45 PM', or 'approximate/unknown').",
+                description="Time of birth or 'unknown'.",
             ),
             "birth_place": types.Schema(
                 type=types.Type.STRING,
-                description="City/Place of birth (e.g., 'Delhi', 'Mumbai', 'Jaipur', 'Pune').",
+                description="City of birth.",
             ),
             "primary_concern": types.Schema(
                 type=types.Type.STRING,
-                description="Primary topic the caller wants to consult about: 'career', 'marriage', 'love', 'wealth', 'health', or 'general'.",
+                description="Topic: 'career', 'marriage', 'love', 'wealth', 'health', or 'general'.",
             ),
         },
         required=["birth_date", "birth_place"],
@@ -76,27 +71,21 @@ generate_janam_kundli_schema = types.FunctionDeclaration(
 
 analyze_kundli_question_schema = types.FunctionDeclaration(
     name="analyze_kundli_question",
-    description=(
-        "Perform a deep Vedic astrological analysis for a specific life domain or question on Astrotalk: "
-        "'career' (10th house Karma Bhava, promotion, job switch, abroad), 'marriage' or 'love' (7th house "
-        "Kalatra Bhava, marriage timing, love vs arranged, Gun Milan / partner compatibility), 'wealth' "
-        "(2nd/11th house Dhana/Labha Yoga, business, property), or 'health' (6th/8th house & mental peace). "
-        "Returns house lord analysis, Gochar (transit) impact of Jupiter/Saturn/Rahu, and exact auspicious timelines."
-    ),
+    description="Analyze a Kundli question (career, marriage/Gun Milan, love, wealth, health) with Dasha and Gochar timing.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "domain": types.Schema(
                 type=types.Type.STRING,
-                description="Consultation domain: 'career', 'marriage', 'love', 'wealth', 'property', 'foreign', or 'health'.",
+                description="Domain: 'career', 'marriage', 'love', 'wealth', or 'health'.",
             ),
             "specific_question": types.Schema(
                 type=types.Type.STRING,
-                description="The caller's specific question or situation.",
+                description="Caller's question.",
             ),
             "partner_details": types.Schema(
                 type=types.Type.STRING,
-                description="Optional partner name or birth details if asking about Love / Marriage / Kundli Milan.",
+                description="Optional partner details for Gun Milan.",
             ),
         },
         required=["domain", "specific_question"],
@@ -105,29 +94,25 @@ analyze_kundli_question_schema = types.FunctionDeclaration(
 
 recommend_vedic_remedies_schema = types.FunctionDeclaration(
     name="recommend_vedic_remedies",
-    description=(
-        "Prescribe personalized, Saatvik Vedic remedies (Upay) for the caller's Kundli and optionally book an "
-        "Astrotalk Online VIP E-Pooja, AstroMall energized Gemstone/Rudraksha recommendation, or dispatch the "
-        "Kundli PDF & Remedy Summary to the caller's Astrotalk app chat."
-    ),
+    description="Prescribe Saatvik Vedic Upay, Shuddh Sanskrit Mantra, AstroMall Ratna/Rudraksha, E-Pooja, and Kundli PDF.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "remedy_focus": types.Schema(
                 type=types.Type.STRING,
-                description="Focus area for remedies: 'career_growth', 'marriage_harmony', 'wealth_stability', 'peace_and_graha_shanti', or 'general_blessing'.",
+                description="Focus: 'career_growth', 'marriage_harmony', 'wealth_stability', or 'peace_and_graha_shanti'.",
             ),
             "include_gemstone": types.Schema(
                 type=types.Type.BOOLEAN,
-                description="True if caller asked about or benefits from a natural Ratna (Gemstone) or Rudraksha.",
+                description="True to include Ratna/Rudraksha.",
             ),
             "include_epooja": types.Schema(
                 type=types.Type.BOOLEAN,
-                description="True if booking or recommending an Astrotalk Online E-Pooja / Graha Shanti Sankalp.",
+                description="True to include Online E-Pooja.",
             ),
             "preferred_pooja_date": types.Schema(
                 type=types.Type.STRING,
-                description="Preferred day/date for the E-Pooja Sankalp or follow-up consultation (e.g., 'Coming Thursday', 'Shukla Paksha Ekadashi').",
+                description="Preferred Shubh Muhurat day/date.",
             ),
         },
         required=["remedy_focus"],
@@ -136,20 +121,13 @@ recommend_vedic_remedies_schema = types.FunctionDeclaration(
 
 switch_phase_schema = types.FunctionDeclaration(
     name="switch_phase",
-    description=(
-        "Transition the active Astrotalk Panditji SOP phase and inject its JIT phase card before replying. "
-        "Allowed phases: 'SOP_01_BIRTH_DETAILS', 'SOP_02_KUNDLI_DASHAS', "
-        "'SOP_03_LIFE_PREDICTION', 'SOP_04_VEDIC_REMEDIES'."
-    ),
+    description="Switch active Panditji SOP phase ('SOP_01_BIRTH_DETAILS'..'SOP_04_VEDIC_REMEDIES').",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "phase_id": types.Schema(
                 type=types.Type.STRING,
-                description=(
-                    "Target phase identifier: 'SOP_01_BIRTH_DETAILS', 'SOP_02_KUNDLI_DASHAS', "
-                    "'SOP_03_LIFE_PREDICTION', or 'SOP_04_VEDIC_REMEDIES'."
-                ),
+                description="Phase ID: 'SOP_01_BIRTH_DETAILS', 'SOP_02_KUNDLI_DASHAS', 'SOP_03_LIFE_PREDICTION', or 'SOP_04_VEDIC_REMEDIES'.",
             ),
         },
         required=["phase_id"],
@@ -356,8 +334,10 @@ class AstrotalkPanditjiEngine:
             "planetary_placements": profile["planetary_highlights"],
             "dosha_and_sade_sati": profile["dosha_check"],
             "next_script_instruction": (
-                "Share the caller's Lagna, Rashi, Nakshatra, and current Mahadasha-Antardasha warmly in 1-2 reassuring "
-                "sentences, highlight their positive Raj Yoga / Gajakesari Yoga, and ask what specific question in "
+                "Speak ONLY in the single language the caller is using right now (NEVER reply in Hindi and then "
+                "translate or repeat in English; if English, use 100% Indian English with 'ji'). Share the caller's "
+                "Lagna, Rashi, Nakshatra, and current Mahadasha-Antardasha warmly in 1-2 reassuring sentences, "
+                "highlight their positive Raj Yoga / Gajakesari Yoga, and ask what specific question in "
                 f"{primary_concern or 'career, marriage, or finance'} they would like to explore first. "
                 "Do NOT call switch_phase (SOP_02_KUNDLI_DASHAS is already active)."
             ),
@@ -409,10 +389,11 @@ class AstrotalkPanditjiEngine:
             "practical_counsel": insight["counsel"],
             **({"gun_milan_compatibility": insight["gun_milan_note"]} if "gun_milan_note" in insight else {}),
             "next_script_instruction": (
+                "Speak ONLY in the caller's single active language (never reply in Hindi and then repeat in English). "
                 "Explain the astrological reason (citing the house and current Dasha/Gochar transit) and the exact "
-                "favorable timeline in 1-2 warm, uplifting sentences. Then ask if they would like simple Saatvik "
-                "Vedic Upay (remedies) to strengthen this yoga, and WAIT for the caller to reply before calling "
-                "`recommend_vedic_remedies`. Do NOT call switch_phase (SOP_03_LIFE_PREDICTION is already active)."
+                "favorable timeline in 1-2 warm, uplifting sentences. Then ask in that same language if they would like "
+                "simple Saatvik Vedic Upay (remedies) to strengthen this yoga, and WAIT for the caller to reply before "
+                "calling `recommend_vedic_remedies`. Do NOT call switch_phase (SOP_03_LIFE_PREDICTION is already active)."
             ),
         }
 
@@ -440,27 +421,43 @@ class AstrotalkPanditjiEngine:
             consultation_id = f"AT-KUNDLI-{ref_num}"
 
             if "marri" in focus or "love" in focus:
-                mantra = "Chant 'Om Brim Brihaspataye Namah' or 'Om Shum Shukraya Namah' 108 times on Thursdays/Fridays."
-                daan = "Offer yellow chana dal or white sweets at a temple on Thursdays and light a cow-ghee lamp."
+                shuddh_mantra = "ॐ बृं बृहस्पतये नमः ... ॐ शुं शुक्राय नमः।"
+                mantra = (
+                    "Chant slowly in pure Shuddh Sanskrit: 'ॐ बृं बृहस्पतये नमः ... ॐ शुं शुक्राय नमः।' "
+                    "(108 times on Thursday and Friday mornings with a calm mind)."
+                )
+                daan = "Offer yellow chana dal or white sweets at a temple on Thursdays and light a cow-ghee lamp (गौ-घृत दीपक)."
                 gemstone = "Natural Pukhraj (Yellow Sapphire, 5.25 Ratti in Gold on index finger on Thursday morning) or 6-Mukhi Rudraksha via Astrotalk AstroMall."
                 pooja_name = "Astrotalk Shukra-Guru Vivah & Sambandh Siddhi Online E-Pooja"
             elif "wealth" in focus or "business" in focus:
-                mantra = "Recite Kanakadhara Stotram or 'Om Shreem Hreem Shreem Kamale Kamalalaye Praseed Praseed' on Fridays."
-                daan = "Feed green fodder to cows (Gau Seva) on Wednesdays and keep a Shree Yantra in the North-East (Ishaan Kon)."
+                shuddh_mantra = "ॐ श्रीं ह्रीं श्रीं कमले कमलालये प्रसीद प्रसीद ... ॐ श्रीं ह्रीं श्रीं महालक्ष्म्यै नमः।"
+                mantra = (
+                    "Chant slowly in pure Shuddh Sanskrit: 'ॐ श्रीं ह्रीं श्रीं कमले कमलालये प्रसीद प्रसीद ... "
+                    "ॐ श्रीं ह्रीं श्रीं महालक्ष्म्यै नमः।' (108 times on Friday mornings)."
+                )
+                daan = "Feed green fodder to cows (गौ सेवा) on Wednesdays and keep a Shree Yantra in the North-East (ईशान कोण)."
                 gemstone = "Natural Panna (Emerald, 5.25 Ratti in Gold/Silver on little finger on Wednesday) or 7-Mukhi Rudraksha via Astrotalk AstroMall."
                 pooja_name = "Astrotalk Mahalakshmi Kubera Dhana Samriddhi Online E-Pooja"
             elif "health" in focus or "peace" in focus:
-                mantra = "Chant Mahamrityunjaya Mantra 21 times daily and offer जल (water) to Surya Dev in a copper vessel every morning."
-                daan = "Donate black sesame (kale til) or mustard oil on Saturdays and perform Rudrabhishek."
+                shuddh_mantra = "ॐ त्र्यम्बकं यजामहे, सुगन्धिं पुष्टिवर्धनम् ... उर्वारुकमिव बन्धनान्, मृत्योर्मुक्षीय मामृतात्।"
+                mantra = (
+                    "Chant the Mahamrityunjaya Mantra in pure Shuddh Sanskrit: 'ॐ त्र्यम्बकं यजामहे, सुगन्धिं पुष्टिवर्धनम् ... "
+                    "उर्वारुकमिव बन्धनान्, मृत्योर्मुक्षीय मामृतात्।' (21 times daily and offer जल to Surya Dev in a copper vessel)."
+                )
+                daan = "Donate black sesame (काले तिल) or mustard oil on Saturdays and perform Rudrabhishek."
                 gemstone = "5-Mukhi energized Nepali Rudraksha on a red thread on Monday morning via Astrotalk AstroMall."
                 pooja_name = "Astrotalk Navagraha Shanti & Mahamrityunjaya Online E-Pooja"
             else:
-                mantra = "Offer Arghya (water with kumkum) to rising Surya Dev daily and chant Aditya Hridaya Stotra or 'Om Gram Greem Groum Sah Gurave Namah' on Thursdays."
-                daan = "Feed birds (pakshiyon ko satnaja) in the morning and offer turmeric/chana dal on Thursdays."
+                shuddh_mantra = "ॐ ग्रां ग्रीं ग्रौं सः गुरवे नमः ... ॐ घृणि सूर्याय नमः।"
+                mantra = (
+                    "Offer सूर्य अर्घ्य (water with kumkum) to rising Surya Dev daily and chant in pure Shuddh Sanskrit: "
+                    "'ॐ ग्रां ग्रीं ग्रौं सः गुरवे नमः ... ॐ घृणि सूर्याय नमः।' (108 times on Thursday mornings)."
+                )
+                daan = "Feed birds (पक्षियों को सतनाजा) in the morning and offer turmeric/chana dal on Thursdays."
                 gemstone = "Natural Pukhraj (Yellow Sapphire) or Manikya (Ruby, 5.25 Ratti) after trial, or 5-Mukhi Rudraksha via Astrotalk AstroMall."
                 pooja_name = "Astrotalk Baglamukhi & Navagraha Karya Siddhi Online E-Pooja"
 
-            self.slots["remedy_prescribed"] = mantra
+            self.slots["remedy_prescribed"] = shuddh_mantra
             self.slots["gemstone_guidance"] = gemstone if include_gemstone else "Saatvik Mantra & Daan only"
             self.slots["pooja_or_booking"] = pooja_name if include_epooja else "Kundli & Upay Summary Dispatched"
             self.slots["consultation_id"] = consultation_id
@@ -470,6 +467,7 @@ class AstrotalkPanditjiEngine:
                 "retryable": False,
                 "consultation_id": consultation_id,
                 "remedy_focus": focus,
+                "shuddh_sanskrit_mantra": shuddh_mantra,
                 "saatvik_mantra_upay": mantra,
                 "daan_and_lifestyle_upay": daan,
                 "astromall_gemstone_rudraksha": gemstone if include_gemstone else None,
@@ -478,18 +476,21 @@ class AstrotalkPanditjiEngine:
                 "kundli_pdf_dispatched_to_app": True,
                 "next_action": "speak_remedies_and_warm_blessing_naturally",
                 "voice_rule": (
-                    "Deliver the remedies and blessing warmly to the caller in their Indian language, then ask if they "
-                    "have any other question. Do NOT call switch_phase or recommend_vedic_remedies again. "
+                    "Speak ONLY in the single language the caller is speaking right now (NEVER speak in Hindi and then "
+                    "translate or repeat in English). Recite the Devanagari mantra (`shuddh_sanskrit_mantra`) slowly, "
+                    "melodiously, and reverently in pure Shuddh Sanskrit pronunciation (शुद्ध वैदिक उच्चारण) with natural "
+                    "pauses at '...' and '।'. Deliver the remedies and blessing warmly, then ask in their language if "
+                    "they have any other question. Do NOT call switch_phase or recommend_vedic_remedies again. "
                     "Never say 'this is complete', 'this is already complete', or 'consultation complete'."
                 ),
                 "mandatory_spoken_points": (
-                    f"1. Share 1-2 simple Saatvik remedies ({mantra} and {daan}). "
+                    f"1. Chant the Vedic mantra slowly in pure Shuddh Sanskrit: '{shuddh_mantra}', and explain the Saatvik Upay ({daan}) in ONLY the caller's single spoken language. "
                     + (f"2. Mention optional gemstone/Rudraksha guidance ({gemstone}). " if include_gemstone else "")
                     + (f"3. Confirm {pooja_name} Sankalp for {pooja_date} (Ref {consultation_id}). " if include_epooja else "")
-                    + f"4. Inform the caller that their full Janam Kundli PDF and written Upay summary ({consultation_id}) "
-                    "have been sent to their Astrotalk chat, bless them warmly ('ईश्वर आपकी सभी मनोकामनाएं पूर्ण करें, शुभम् भवतु!'), "
-                    "and ask if they have any other question ('क्या आपका कोई और प्रश्न है?'). "
-                    "Do NOT call switch_phase or any tool after speaking, and NEVER say 'This is complete' or 'This is already complete'."
+                    + f"4. Inform the caller in their active language that their full Janam Kundli PDF and written Upay summary ({consultation_id}) "
+                    "have been sent to their Astrotalk chat, offer a warm Vedic blessing ('शुभम् भवतु, जय श्री कृष्ण!'), "
+                    "and ask in their single spoken language if they have any other question. "
+                    "Do NOT call switch_phase or any tool after speaking, NEVER reply in two languages, and NEVER say 'This is complete' or 'This is already complete'."
                 ),
             }
 

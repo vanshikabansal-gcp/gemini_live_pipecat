@@ -1,4 +1,4 @@
-import { createDiagnosticAccess, diagnosticHeaders } from "./session-diagnostics";
+import { createDiagnosticAccess, diagnosticHeaders, setDiagnosticAccess } from "./session-diagnostics";
 import { buildConnectRequest, isAvatarActive, validateSocketUrl, type SessionSettings } from "./voice-session";
 import { calculateTurnCost, type UsageTokenData } from "./pricing";
 import { startAmbientNoise, type AmbientNoiseController } from "./ambient-noise";
@@ -324,7 +324,10 @@ export async function createLiveSession(settings: SessionSettings, events: Sessi
           : "Cannot reach your backend. Check its HTTPS address, CORS settings, and that it is running.");
       } finally { clearTimeout(timeout); }
       if (!response.ok) throw new Error(`Backend returned HTTP ${response.status}. Check that /connect is available.`);
-      const result = await response.json() as { ws_url?: unknown };
+      const result = await response.json() as { ws_url?: unknown; diagnostic_token?: unknown };
+      if (settings.sessionId && typeof result.diagnostic_token === "string") {
+        setDiagnosticAccess(settings.sessionId, result.diagnostic_token);
+      }
       const wsUrl = validateSocketUrl(result.ws_url, settings.backendUrl);
       if (stopped) return;
       context = new AudioContext({ sampleRate: 24000 });
