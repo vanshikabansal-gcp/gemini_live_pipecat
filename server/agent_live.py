@@ -358,7 +358,8 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         if user_idle is not None:
             user_idle._bot_speaking = True
             user_idle.last_activity = time.monotonic()
-        self._bind_live_output_turn()
+        if hasattr(self, "_bind_live_output_turn"):
+            self._bind_live_output_turn()
         self.response_identity.begin()
 
     async def _begin_avatar_output(self):
@@ -847,7 +848,8 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
     async def _handle_msg_output_transcription(self, message):
         if getattr(self, "_awaiting_interrupted_turn_complete", False):
             return
-        self._bind_live_output_turn()
+        if hasattr(self, "_bind_live_output_turn"):
+            self._bind_live_output_turn()
         self.response_identity.begin()
         has_text = bool(message.server_content.output_transcription and message.server_content.output_transcription.text)
         if has_text:
@@ -1068,7 +1070,8 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
                 "type": "server-message",
                 "data": {"type": f"{kind}_fallback", **notice},
             }))
-        self.create_task(self._ensure_greeting_after_session_ready())
+        if hasattr(self, "create_task") and hasattr(self, "_ensure_greeting_after_session_ready"):
+            self.create_task(self._ensure_greeting_after_session_ready())
 
     async def _handle_msg_usage_metadata(self, message):
         await super()._handle_msg_usage_metadata(message)
@@ -1311,12 +1314,8 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         if isinstance(self, GeminiLiveVertexLLMService):
             # Transcription language pinning is Vertex AI Enterprise only.
             from google.genai.types import AudioTranscriptionConfig
-            if getattr(self, "_multilingual_transcription", False):
-                config.input_audio_transcription = AudioTranscriptionConfig()
-                config.output_audio_transcription = AudioTranscriptionConfig()
-            else:
-                config.input_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
-                config.output_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
+            config.input_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
+            config.output_audio_transcription = AudioTranscriptionConfig(language_codes=[lang_code])
 
         # Enforce sliding_window.target_tokens on context compression (80% of trigger_tokens)
         if getattr(config, "context_window_compression", None):
@@ -1695,10 +1694,10 @@ class StartTriggerProcessor(FrameProcessor):
             samples = np.frombuffer(audio_bytes, dtype=np.int16)
             rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if len(samples) > 0 else 0.0
 
-            # Barge-in speech threshold (only once bot has actually started speaking its greeting;
-            # opening the gate before the greeting starts allows downstream VADProcessor + LLMUserAggregator
-            # to emit VADUserStartedSpeakingFrame -> broadcast_interruption() and wipe the queued greeting!).
-            if self._bot_greeting_started and rms > 650.0:
+            # Barge-in speech threshold (when start_trigger was received, wait until bot has started
+            # speaking its greeting so pre-greeting ambient noise cannot wipe the queued greeting).
+            can_barge_in = self._bot_greeting_started or not self._start_trigger_received
+            if can_barge_in and rms > 650.0:
                 self._consecutive_speech_frames += 1
                 if self._consecutive_speech_frames >= 2:
                     logger.info(
@@ -1855,7 +1854,7 @@ def compose_live_system_prompt(
             "When chanting Vedic mantras or shlokas, recite them in pure SHUDDH DEVANAGARI SANSKRIT (शुद्ध वैदिक संस्कृत उच्चारण) with slow, resonant, unhurried pauses (...). "
             "NEVER output meta-status phrases like 'This is complete' or 'This is already complete'."
         )
-    return f"{base}\n\nIMPORTANT: You must converse in {language} language. Never say meta-status phrases like 'This is complete' or 'This is already complete'."
+    return f"{base}\n\nIMPORTANT: You must converse in {language} language."
 
 
 def resolve_live_vad_mode(vad: bool = True, vad_mode: Optional[str] = None) -> tuple[str, bool, bool]:
@@ -2458,7 +2457,7 @@ async def run_agent_live(
 
     user_params = LLMUserAggregatorParams(
         user_turn_strategies=UserTurnStrategies(
-            start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy()],
+            start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy(enable_interruptions=False)],
             stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
         )
     )

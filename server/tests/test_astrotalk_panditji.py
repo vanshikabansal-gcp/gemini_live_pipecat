@@ -94,7 +94,7 @@ class TestAstrotalkPanditji(unittest.IsolatedAsyncioTestCase):
             async def result_callback(self, res):
                 self.result = res
 
-        # 1. generate_janam_kundli auto-transitions to SOP_02_KUNDLI_DASHAS
+        # 1. generate_janam_kundli auto-transitions to SOP_02_KUNDLI_DASHAS and embeds card without calling inject_directive
         p1 = DummyParams({
             "caller_name": "Aarav",
             "birth_date": "15 August 1995",
@@ -103,30 +103,40 @@ class TestAstrotalkPanditji(unittest.IsolatedAsyncioTestCase):
         })
         await handlers["generate_janam_kundli"](p1)
         self.assertEqual(arch.engine.active_phase, "SOP_02_KUNDLI_DASHAS")
+        self.assertIn("active_phase_card", p1.result)
+        self.assertIn("SOP_02", p1.result["active_phase_card"])
+        llm.inject_directive.assert_not_awaited()
 
-        # 2. analyze_kundli_question auto-transitions to SOP_03_LIFE_PREDICTION
+        # 2. analyze_kundli_question auto-transitions to SOP_03_LIFE_PREDICTION and embeds card without calling inject_directive
         p2 = DummyParams({
             "domain": "career",
             "specific_question": "When will I get promoted?",
         })
         await handlers["analyze_kundli_question"](p2)
         self.assertEqual(arch.engine.active_phase, "SOP_03_LIFE_PREDICTION")
+        self.assertIn("active_phase_card", p2.result)
+        self.assertIn("SOP_03", p2.result["active_phase_card"])
+        llm.inject_directive.assert_not_awaited()
 
-        # 3. recommend_vedic_remedies auto-transitions to SOP_04_VEDIC_REMEDIES
+        # 3. recommend_vedic_remedies auto-transitions to SOP_04_VEDIC_REMEDIES and embeds card without calling inject_directive
         p3 = DummyParams({
             "remedy_focus": "career_growth",
             "include_gemstone": True,
         })
         await handlers["recommend_vedic_remedies"](p3)
         self.assertEqual(arch.engine.active_phase, "SOP_04_VEDIC_REMEDIES")
+        self.assertIn("active_phase_card", p3.result)
+        self.assertIn("SOP_04", p3.result["active_phase_card"])
         self.assertEqual(p3.result["next_action"], "speak_remedies_and_warm_blessing_naturally")
         self.assertIn("Never say 'this is complete'", p3.result["voice_rule"])
+        llm.inject_directive.assert_not_awaited()
 
         # 4. Redundant switch_phase to SOP_04_VEDIC_REMEDIES returns already_sent + anti-meta voice_rule
         p4 = DummyParams({"phase_id": "SOP_04_VEDIC_REMEDIES"})
         await handlers["switch_phase"](p4)
         self.assertEqual(p4.result["delivery_status"], "already_sent")
         self.assertIn("NEVER say 'This is complete'", p4.result["voice_rule"])
+        llm.inject_directive.assert_not_awaited()
 
     async def test_start_trigger_processor_defers_until_start_frame_and_gates_mic(self):
         from agent_live import StartTriggerProcessor, resolve_prebuilt_avatar_name

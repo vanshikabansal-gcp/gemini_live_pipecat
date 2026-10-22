@@ -539,7 +539,13 @@ class JITPhaseCardsArchitecture(BasePersonaArchitecture):
         return registered
 
 
-async def _deliver_phase_card(architecture, card, formatter, label):
+async def _deliver_phase_card(
+    architecture,
+    card,
+    formatter,
+    label,
+    embed_in_result: Optional[Dict[str, Any]] = None,
+):
     """Commit the active phase only after the provider accepts its context card."""
     from diagnostic_buffer import current_session_id
     if architecture._last_card_key == card.phase_id:
@@ -553,7 +559,11 @@ async def _deliver_phase_card(architecture, card, formatter, label):
             ),
         }
     delivered = False
-    if architecture._llm:
+    if embed_in_result is not None:
+        embed_in_result["active_phase_card"] = formatter(card)
+        delivered = True
+        logger.info(f"[{label}/Card {card.phase_id}] Embedded into FunctionResponse (single-turn delivery).")
+    elif architecture._llm:
         try:
             delivered = bool(await architecture._llm.inject_directive(
                 formatter(card), tag=f"{label}/Card {card.phase_id}",
@@ -871,7 +881,9 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
             tools.append(switch_phase_schema)
         return standard_function_schemas(tools)
 
-    async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _switch_phase(
+        self, args: Dict[str, Any], embed_in_result: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         from persona_prompt_cards.bhps_cards import (
             get_bhps_phase_card,
             format_bhps_prompt_card,
@@ -888,6 +900,7 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
             card,
             lambda c: format_bhps_prompt_card(c, state=slots),
             "Riya",
+            embed_in_result=embed_in_result,
         )
 
     def register_handlers(self, llm: Any, broadcast=None, engine: str = "live") -> List[str]:
@@ -900,7 +913,10 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
         if engine != "cascade":
             async def handle_switch_phase(params):
                 async with self._card_lock:
-                    result = await self._switch_phase(params.arguments or {})
+                    embedded: Dict[str, Any] = {}
+                    result = await self._switch_phase(params.arguments or {}, embed_in_result=embedded)
+                    if embedded:
+                        result = {**result, **embedded}
                 await params.result_callback(result)
             llm.register_function("switch_phase", handle_switch_phase)
             registered.append("switch_phase")
@@ -915,7 +931,9 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
                     and not result.get("bh_store_available")
                     and not result.get("sleek_kitchen_available")
                 ):
-                    await self._switch_phase({"phase_id": "SOP_02_SCOPE_QUALIFICATION"})
+                    await self._switch_phase(
+                        {"phase_id": "SOP_02_SCOPE_QUALIFICATION"}, embed_in_result=result
+                    )
             await params.result_callback(result)
 
         async def handle_record_painting_qualification(params):
@@ -926,11 +944,17 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
                     next_inst = str(result.get("next_script_instruction", ""))
                     scope = str(args.get("painting_scope", "")).lower()
                     if "SOP_04_VISIT_BOOKING" in next_inst:
-                        await self._switch_phase({"phase_id": "SOP_04_VISIT_BOOKING"})
+                        await self._switch_phase(
+                            {"phase_id": "SOP_04_VISIT_BOOKING"}, embed_in_result=result
+                        )
                     elif scope in ("bh_store_interiors", "sleek_kitchen_wardrobe"):
-                        await self._switch_phase({"phase_id": "SOP_03_INTERIORS_OR_SLEEK"})
+                        await self._switch_phase(
+                            {"phase_id": "SOP_03_INTERIORS_OR_SLEEK"}, embed_in_result=result
+                        )
                     elif self.engine.active_phase == "SOP_01_PINCODE_SERVICEABILITY":
-                        await self._switch_phase({"phase_id": "SOP_02_SCOPE_QUALIFICATION"})
+                        await self._switch_phase(
+                            {"phase_id": "SOP_02_SCOPE_QUALIFICATION"}, embed_in_result=result
+                        )
             await params.result_callback(result)
 
         async def handle_book_bhps_action(params):
@@ -938,7 +962,9 @@ class AsianPaintsBHPSArchitecture(BasePersonaArchitecture):
                 args = params.arguments or {}
                 result = await self.engine.book_bhps_action(args)
                 if engine != "cascade" and args.get("action_type") != "schedule_callback":
-                    await self._switch_phase({"phase_id": "SOP_04_VISIT_BOOKING"})
+                    await self._switch_phase(
+                        {"phase_id": "SOP_04_VISIT_BOOKING"}, embed_in_result=result
+                    )
             await params.result_callback(result)
 
         llm.register_function("check_pincode_serviceability", handle_check_pincode_serviceability)
@@ -1012,7 +1038,9 @@ class AstrotalkPanditjiArchitecture(BasePersonaArchitecture):
             tools.append(switch_phase_schema)
         return standard_function_schemas(tools)
 
-    async def _switch_phase(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _switch_phase(
+        self, args: Dict[str, Any], embed_in_result: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         from persona_prompt_cards.panditji_cards import (
             get_panditji_phase_card,
             format_panditji_prompt_card,
@@ -1029,6 +1057,7 @@ class AstrotalkPanditjiArchitecture(BasePersonaArchitecture):
             card,
             lambda c: format_panditji_prompt_card(c, state=slots),
             "Panditji",
+            embed_in_result=embed_in_result,
         )
 
     def register_handlers(self, llm: Any, broadcast=None, engine: str = "live") -> List[str]:
@@ -1041,7 +1070,10 @@ class AstrotalkPanditjiArchitecture(BasePersonaArchitecture):
         if engine != "cascade":
             async def handle_switch_phase(params):
                 async with self._card_lock:
-                    result = await self._switch_phase(params.arguments or {})
+                    embedded: Dict[str, Any] = {}
+                    result = await self._switch_phase(params.arguments or {}, embed_in_result=embedded)
+                    if embedded:
+                        result = {**result, **embedded}
                 await params.result_callback(result)
             llm.register_function("switch_phase", handle_switch_phase)
             registered.append("switch_phase")
@@ -1050,21 +1082,27 @@ class AstrotalkPanditjiArchitecture(BasePersonaArchitecture):
             async with self._card_lock:
                 result = await self.engine.generate_janam_kundli(params.arguments or {})
                 if engine != "cascade" and self.engine.active_phase == "SOP_01_BIRTH_DETAILS":
-                    await self._switch_phase({"phase_id": "SOP_02_KUNDLI_DASHAS"})
+                    await self._switch_phase(
+                        {"phase_id": "SOP_02_KUNDLI_DASHAS"}, embed_in_result=result
+                    )
             await params.result_callback(result)
 
         async def handle_analyze_kundli_question(params):
             async with self._card_lock:
                 result = await self.engine.analyze_kundli_question(params.arguments or {})
                 if engine != "cascade" and self.engine.active_phase in ("SOP_01_BIRTH_DETAILS", "SOP_02_KUNDLI_DASHAS"):
-                    await self._switch_phase({"phase_id": "SOP_03_LIFE_PREDICTION"})
+                    await self._switch_phase(
+                        {"phase_id": "SOP_03_LIFE_PREDICTION"}, embed_in_result=result
+                    )
             await params.result_callback(result)
 
         async def handle_recommend_vedic_remedies(params):
             async with self._card_lock:
                 result = await self.engine.recommend_vedic_remedies(params.arguments or {})
                 if engine != "cascade":
-                    await self._switch_phase({"phase_id": "SOP_04_VEDIC_REMEDIES"})
+                    await self._switch_phase(
+                        {"phase_id": "SOP_04_VEDIC_REMEDIES"}, embed_in_result=result
+                    )
             await params.result_callback(result)
 
         llm.register_function("generate_janam_kundli", handle_generate_janam_kundli)
