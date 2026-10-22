@@ -640,7 +640,9 @@ export function reconcileVoiceForEngine(
   }
   if (settings.ttsModel === "google-tts") {
     if (!isClonedVoice(settings.voice) && !settings.voice.includes("Chirp")) {
-      return "hi-IN-Chirp3-HD-Sulafat";
+      return settings.personaId === "astrotalk-panditji"
+        ? "hi-IN-Chirp3-HD-Achird"
+        : "hi-IN-Chirp3-HD-Sulafat";
     }
     return settings.voice;
   }

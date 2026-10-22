@@ -1136,6 +1136,10 @@ async def run_agent(
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "deep-clock-339817"
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
 
+    if persona_identity.normalize_persona_id(persona_id) == "astrotalk-panditji":
+        if not tts_voice or voice_profiles.voice_gender(tts_voice) != "male":
+            tts_voice = "hi-IN-Chirp3-HD-Achird" if tts_model == "google-tts" else "Charon"
+
     # Automatically apply Persona Voice Design defaults if not explicitly overridden
     resolved_vd = resolve_persona_voice_design(
         persona_id,

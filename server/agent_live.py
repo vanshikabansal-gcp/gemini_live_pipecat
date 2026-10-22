@@ -2154,10 +2154,10 @@ async def run_agent_live(
     canonical_persona_id = persona_identity.normalize_persona_id(persona_id)
     if canonical_persona_id == "asian-paints" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore")):
         voice = "Despina"
-    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice.strip() in ("", "Aoede", "Gacrux", "Kore", "Charon", "Puck")):
-        voice = "Sulafat"
+    elif canonical_persona_id == "astrotalk-panditji" and (not voice or voice_profiles.voice_gender(voice) != "male"):
+        voice = "Charon"
 
-    gender = voice_profiles.voice_gender(voice) or "female"
+    gender = "male" if canonical_persona_id == "astrotalk-panditji" else (voice_profiles.voice_gender(voice) or "female")
     if canonical_persona_id == "astrotalk-panditji" and language == "en-US":
         effective_speech_language = "hi-IN"
     elif canonical_persona_id == "asian-paints" and language == "en-US":

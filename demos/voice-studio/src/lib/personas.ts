@@ -199,7 +199,7 @@ export const PERSONAS: Persona[] = [
     architectureNote:
       "Astrotalk Jyotish Acharya · Janam Kundli, Dasha & Vedic Upay Tools + JIT Cards",
     portrait: "/personas/panditji.webp",
-    defaultVoice: "Sulafat",
+    defaultVoice: "Charon",
     description:
       "Senior Vedic Astrologer at Astrotalk with a pure Indian accent across all Indian languages (Hindi, Hinglish, Indian English, Marathi, Gujarati, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi). Casts Janam/Prashna Kundli, reads Dashas & chants Shuddh Sanskrit Vedic mantras.",
     userRole:
