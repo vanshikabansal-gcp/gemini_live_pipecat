@@ -128,6 +128,74 @@ class TestAstrotalkPanditji(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p4.result["delivery_status"], "already_sent")
         self.assertIn("NEVER say 'This is complete'", p4.result["voice_rule"])
 
+    async def test_start_trigger_processor_defers_until_start_frame_and_gates_mic(self):
+        from agent_live import StartTriggerProcessor, resolve_prebuilt_avatar_name
+        from pipecat.frames.frames import (
+            BotStartedSpeakingFrame,
+            BotStoppedSpeakingFrame,
+            InputAudioRawFrame,
+            InputTransportMessageFrame,
+            LLMMessagesAppendFrame,
+            LLMRunFrame,
+            StartFrame,
+        )
+
+        # Avatar resolution for Panditji even with Sulafat voice
+        self.assertEqual(
+            resolve_prebuilt_avatar_name("auto", "astrotalk-panditji", "Sulafat", "female"),
+            "Ben",
+        )
+
+        proc = StartTriggerProcessor(
+            language="hi-IN",
+            gate_mic_on_greeting=True,
+            persona_id="astrotalk-panditji",
+        )
+        proc._enable_direct_mode = True
+        self.assertEqual(proc.get_greeting_text(), "प्रणाम पंडित जी! जय श्री कृष्ण!")
+
+        pushed = []
+
+        async def capture_push(frame, direction=None):
+            pushed.append(frame)
+
+        proc.push_frame = capture_push
+        proc.broadcast_interruption = AsyncMock()
+
+        # 1. If start_trigger arrives before StartFrame, it is deferred until StartFrame is processed
+        await proc.process_frame(
+            InputTransportMessageFrame(message={"type": "start_trigger", "id": "t1"})
+        )
+        self.assertFalse(proc.triggered)
+        self.assertEqual(len(pushed), 0)
+
+        # 2. When StartFrame arrives, it forwards StartFrame and immediately fires the deferred greeting
+        await proc.process_frame(StartFrame())
+        self.assertTrue(proc.triggered)
+        self.assertTrue(any(isinstance(f, StartFrame) for f in pushed))
+        self.assertTrue(any(isinstance(f, LLMMessagesAppendFrame) for f in pushed))
+        self.assertTrue(any(isinstance(f, LLMRunFrame) for f in pushed))
+
+        # 3. Ambient noise while mic is gated is dropped
+        pushed.clear()
+        quiet_pcm = (b"\x10\x00" * 320)
+        await proc.process_frame(InputAudioRawFrame(audio=quiet_pcm, sample_rate=16000, num_channels=1))
+        self.assertEqual(len(pushed), 0)
+
+        # 4. Loud audio before BotStartedSpeakingFrame opens gate WITHOUT broadcasting interruption
+        loud_pcm = (b"\x00\x10" * 320)  # value 4096 > 650 RMS
+        await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
+        await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
+        self.assertFalse(proc._mic_gated)
+        proc.broadcast_interruption.assert_not_awaited()
+        self.assertGreaterEqual(len(pushed), 2)
+
+        # 5. BotStartedSpeakingFrame / BotStoppedSpeakingFrame lifecycle
+        await proc.process_frame(BotStartedSpeakingFrame())
+        self.assertTrue(proc._bot_greeting_started)
+        await proc.process_frame(BotStoppedSpeakingFrame())
+        self.assertFalse(proc._mic_gated)
+
 
 if __name__ == "__main__":
     unittest.main()

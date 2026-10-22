@@ -54,6 +54,7 @@ from pipecat.frames.frames import (
     CancelFrame,
     LLMMessagesAppendFrame,
     TextFrame,
+    TTSStartedFrame,
     TTSStoppedFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
@@ -998,7 +999,50 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
             tag="RepeatOnFiller",
         )
 
-    # ── Session ID & token usage logging ──────────────────────────────
+    # ── Session ID, initial greeting resilience & token usage logging ──
+
+    async def _handle_context(self, context: LLMContext):
+        if not getattr(self, "_initial_greeting_sent", False):
+            st = getattr(self, "start_trigger", None)
+            if st is not None and not context.get_messages():
+                context.add_message({"role": "user", "content": st.get_greeting_text()})
+            if self._context is not None:
+                # Reset _context so super()._handle_context runs the initial context branch
+                # and invokes _create_initial_response() rather than skipping it.
+                self._context = None
+        await super()._handle_context(context)
+
+    async def _create_initial_response(self, for_reconnect: bool = False):
+        if self._disconnecting:
+            return
+        if not for_reconnect and getattr(self, "_initial_greeting_sent", False):
+            self._ready_for_realtime_input = True
+            return
+        st = getattr(self, "start_trigger", None)
+        if not for_reconnect and st is not None:
+            if self._context is None:
+                self._context = getattr(self, "_shared_context", None) or LLMContext(messages=[])
+            if not self._context.get_messages():
+                self._context.add_message({"role": "user", "content": st.get_greeting_text()})
+            st.triggered = True
+        if self._session and not for_reconnect:
+            self._initial_greeting_sent = True
+        await super()._create_initial_response(for_reconnect=for_reconnect)
+        if self._session and not self._disconnecting:
+            self._ready_for_realtime_input = True
+
+    async def _ensure_greeting_after_session_ready(self):
+        await asyncio.sleep(0.35)
+        if self._disconnecting or not self._session:
+            return
+        if not getattr(self, "_initial_greeting_sent", False):
+            st = getattr(self, "start_trigger", None)
+            greeting_text = st.get_greeting_text() if st is not None else "Hello!"
+            logger.info(
+                f"[SessionReadyFallback] Initial greeting not yet sent 350ms after session ready; "
+                f"triggering greeting now: {greeting_text}"
+            )
+            await self._create_initial_response()
 
     async def _handle_session_ready(self, session):
         self._avatar_mp4_buffer = bytearray()
@@ -1006,6 +1050,14 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
         session_id = getattr(session, 'session_id', None) or getattr(session, 'id', None)
         if session_id:
             logger.info(f"Session ID Established: {session_id}")
+        trace_url = getattr(self, "_trace_url", None)
+        if trace_url and not getattr(self, "_trace_url_sent", False):
+            self._trace_url_sent = True
+            await self.push_frame(OutputTransportMessageFrame(message={
+                "label": "rtvi-ai",
+                "type": "server-message",
+                "data": {"type": "trace_url", "url": trace_url}
+            }))
         for kind in ("avatar", "voice"):
             notice = getattr(self, f"_{kind}_fallback_notice", None)
             if not notice:
@@ -1016,6 +1068,7 @@ class GeminiSessionLoggerMixin(TurnOriginMixin):
                 "type": "server-message",
                 "data": {"type": f"{kind}_fallback", **notice},
             }))
+        self.create_task(self._ensure_greeting_after_session_ready())
 
     async def _handle_msg_usage_metadata(self, message):
         await super()._handle_msg_usage_metadata(message)
@@ -1536,14 +1589,33 @@ class StartTriggerProcessor(FrameProcessor):
         self.language = language
         self.persona_id = persona_id
         self.triggered = False
+        self._started = False
+        self._pending_start_trigger_id: Optional[str] = None
+        self._start_trigger_received = False
+        self._bot_greeting_started = False
         self.gate_mic_on_greeting = gate_mic_on_greeting
         self._mic_gated = gate_mic_on_greeting
         self._pre_buffer = deque(maxlen=10)  # ~200ms pre-speech buffer to prevent onset clipping
         self._consecutive_speech_frames = 0
         self._gate_start_time = time.monotonic()
         self._max_gate_duration = 12.0  # Safety timeout
+        self.greeting_text = self.get_greeting_text()
         if self._mic_gated:
             logger.info("[StartTriggerProcessor] Client mic gating enabled for initial greeting turn.")
+
+    def get_greeting_text(self) -> str:
+        norm_pid = persona_identity.normalize_persona_id(self.persona_id)
+        if norm_pid == "asian-paints":
+            if self.language == "mr-IN":
+                return "नमस्कार रिया जी!"
+            if self.language == "hi-IN":
+                return "नमस्ते रिया जी!"
+            return "Namaste Riya ji!"
+        if norm_pid == "astrotalk-panditji":
+            if self.language and self.language.startswith("en"):
+                return "Pranam Panditji! Jai Shri Krishna ji!"
+            return "प्रणाम पंडित जी! जय श्री कृष्ण!"
+        return "Hey!" if self.language == "hi-IN" else "Hello!"
 
     def open_gate(self, reason: str = "manual"):
         if self._mic_gated:
@@ -1551,8 +1623,38 @@ class StartTriggerProcessor(FrameProcessor):
             self._mic_gated = False
             self._pre_buffer.clear()
 
+    async def _fire_greeting_trigger(self, msg_id: Optional[str] = None):
+        if msg_id:
+            await self.push_frame(OutputTransportMessageFrame(message={
+                "label": "rtvi-ai",
+                "type": "response",
+                "id": msg_id,
+                "data": {"status": "ok"}
+            }))
+        if not self.triggered:
+            self.triggered = True
+            self._gate_start_time = time.monotonic()
+            greeting_text = self.get_greeting_text()
+            logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
+            await self.push_frame(LLMMessagesAppendFrame(messages=[{"role": "user", "content": greeting_text}]))
+            await self.push_frame(LLMRunFrame())
+
     async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         await super().process_frame(frame, direction)
+
+        if isinstance(frame, StartFrame):
+            self._started = True
+            await self.push_frame(frame, direction)
+            if self._start_trigger_received and not self.triggered:
+                pending_id = self._pending_start_trigger_id
+                self._pending_start_trigger_id = None
+                await self._fire_greeting_trigger(pending_id)
+            return
+
+        if isinstance(frame, (BotStartedSpeakingFrame, TTSStartedFrame)):
+            self._bot_greeting_started = True
+            await self.push_frame(frame, direction)
+            return
 
         # 1. Gate release on bot completion signals (travels upstream from output transport or downstream from LLM)
         if isinstance(frame, (BotStoppedSpeakingFrame, TTSStoppedFrame)):
@@ -1565,34 +1667,12 @@ class StartTriggerProcessor(FrameProcessor):
             message = frame.message
             if isinstance(message, dict) and message.get("type") == "start_trigger":
                 msg_id = message.get("id")
-                if msg_id:
-                    await self.push_frame(OutputTransportMessageFrame(message={
-                        "label": "rtvi-ai",
-                        "type": "response",
-                        "id": msg_id,
-                        "data": {"status": "ok"}
-                    }))
-                if not self.triggered:
-                    self.triggered = True
-                    self._gate_start_time = time.monotonic()
-                    norm_pid = persona_identity.normalize_persona_id(self.persona_id)
-                    if norm_pid == "asian-paints":
-                        if self.language == "mr-IN":
-                            greeting_text = "नमस्कार रिया जी!"
-                        elif self.language == "hi-IN":
-                            greeting_text = "नमस्ते रिया जी!"
-                        else:
-                            greeting_text = "Namaste Riya ji!"
-                    elif norm_pid == "astrotalk-panditji":
-                        if self.language and self.language.startswith("en"):
-                            greeting_text = "Pranam Panditji! Jai Shri Krishna ji!"
-                        else:
-                            greeting_text = "प्रणाम पंडित जी! जय श्री कृष्ण!"
-                    else:
-                        greeting_text = "Hey!" if self.language == "hi-IN" else "Hello!"
-                    logger.info(f"[StartTriggerProcessor] start_trigger received. Queueing single greeting turn: {greeting_text}")
-                    await self.push_frame(LLMMessagesAppendFrame(messages=[{"role": "user", "content": greeting_text}]))
-                    await self.push_frame(LLMRunFrame())
+                self._start_trigger_received = True
+                if not self._started:
+                    self._pending_start_trigger_id = msg_id
+                    logger.info("[StartTriggerProcessor] Deferring start_trigger until StartFrame is processed.")
+                    return
+                await self._fire_greeting_trigger(msg_id)
                 return
 
         # 3. Audio input gating & user barge-in detection during initial greeting
@@ -1625,11 +1705,14 @@ class StartTriggerProcessor(FrameProcessor):
                     logger.info(
                         f"[GreetingAudioGate] User voice barge-in detected during initial greeting! "
                         f"(RMS={rms:.1f}, frames={self._consecutive_speech_frames}). "
-                        "Broadcasting interruption and opening microphone gate."
+                        "Opening microphone gate."
                     )
                     self._mic_gated = False
-                    # Abort bot greeting playback immediately
-                    await self.broadcast_interruption()
+                    # Only broadcast an interruption if the bot has actually started speaking its greeting;
+                    # broadcasting an interruption before the greeting starts would wipe the queued
+                    # initial LLMContextFrame from __process_queue!
+                    if self._bot_greeting_started:
+                        await self.broadcast_interruption()
                     # Flush onset frames from pre_buffer so first syllable is preserved
                     while self._pre_buffer:
                         buffered_frame = self._pre_buffer.popleft()
@@ -2035,7 +2118,7 @@ def resolve_prebuilt_avatar_name(
         return "Kira"
     if pid == "tech-architect":
         return "Leo"
-    if pid == "store-assistant":
+    if pid == "store-assistant" or pid in ("astrotalk-panditji", "panditji"):
         return "Ben"
     return "Kira" if (voice_profiles.voice_gender(voice) or gender) == "female" else "Ben"
 
@@ -2384,10 +2467,12 @@ async def run_agent_live(
             stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
         )
     )
+    shared_context = LLMContext(messages=[])
     context_aggregator = LLMContextAggregatorPair(
-        LLMContext(messages=[]),
+        shared_context,
         user_params=user_params
     )
+    llm._shared_context = shared_context
 
     async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
         logger.info(f"User idle detected, retry count: {retry_count}")
@@ -2403,7 +2488,7 @@ async def run_agent_live(
         await processor.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
         return False
 
-    gate_mic_on_greeting = "3.1" in (model or "")
+    gate_mic_on_greeting = True
     start_trigger = StartTriggerProcessor(
         language=effective_speech_language,
         gate_mic_on_greeting=gate_mic_on_greeting,
@@ -2439,6 +2524,7 @@ async def run_agent_live(
 
     session_id = current_session_id()
     trace_url = GLOBAL_LANGSMITH_TRACER.start_session(session_id, model=model, voice=voice, language=language)
+    llm._trace_url = trace_url
 
     task = PipelineTask(pipeline, params=PipelineParams(
         enable_metrics=True,
@@ -2451,12 +2537,6 @@ async def run_agent_live(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info(f"Pipecat Client connected. Trace URL: {trace_url}")
-        if trace_url:
-            await transport.output().push_frame(OutputTransportMessageFrame(message={
-                "label": "rtvi-ai",
-                "type": "server-message",
-                "data": {"type": "trace_url", "url": trace_url}
-            }))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

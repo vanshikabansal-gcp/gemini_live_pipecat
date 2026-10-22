@@ -48,10 +48,11 @@ def warm_media_pipelines():
 
     Without this, the first WebSocket on a fresh instance waits for pipecat, google-genai and
     transformers (pulled in by Smart Turn v3) to import, which outlasts client timeouts.
+    Load 'gemini-live' first so the default Gemini Live voice studio is ready within ~2s.
     """
     from runtime_compat import _ensure_valid_adc
     _ensure_valid_adc()
-    for bot_type in ("tts-llm-stt", "gemini-live"):
+    for bot_type in ("gemini-live", "tts-llm-stt"):
         load_pipeline(bot_type)
     importlib.import_module("pipecat.audio.turn.smart_turn.local_smart_turn_v3")
 
@@ -145,6 +146,14 @@ async def websocket_endpoint(
     avatar_enabled: bool = False,
     avatar_name: str = "auto",
 ):
+    if bot_type not in diagnostic_buffer.BOT_TYPES:
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Unknown bot_type")
+        return
+    # Ensure the requested media pipeline module is imported before accepting the WebSocket
+    # handshake so client-ready and start_trigger frames do not arrive while Python is still
+    # importing pipeline dependencies on a cold instance.
+    pipeline_runner_fn = await asyncio.to_thread(load_pipeline, bot_type)
     await websocket.accept()
     _safe_print("WebSocket connection accepted")
     if connection_id:
@@ -155,9 +164,6 @@ async def websocket_endpoint(
         # Raw websocket clients get an isolated anonymous scope; a supplied ID
         # cannot impersonate a session created through /connect.
         session_id = str(uuid4())
-    if bot_type not in diagnostic_buffer.BOT_TYPES:
-        await websocket.close(code=1008, reason="Unknown bot_type")
-        return
     diagnostic_buffer.bind_session(session_id, bot_type)
     stored_instruction = session_access.take_instructions(session_id)
     system_instruction = stored_instruction or system_instruction
@@ -166,7 +172,7 @@ async def websocket_endpoint(
     custom_voice_key = voice_profiles.consume(voice_profile_id)
     try:
         if bot_type == "gemini-live":
-            run_agent_live = await asyncio.to_thread(load_pipeline, bot_type)
+            run_agent_live = pipeline_runner_fn
             await run_agent_live(
                 websocket,
                 model=model,
@@ -190,7 +196,7 @@ async def websocket_endpoint(
                 custom_voice_audio=custom_voice_audio,
             )
         elif bot_type == "tts-llm-stt":
-            run_agent = await asyncio.to_thread(load_pipeline, bot_type)
+            run_agent = pipeline_runner_fn
             await run_agent(
                 websocket,
                 tts_voice=tts_voice,
