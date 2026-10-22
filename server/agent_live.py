@@ -1695,24 +1695,19 @@ class StartTriggerProcessor(FrameProcessor):
             samples = np.frombuffer(audio_bytes, dtype=np.int16)
             rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if len(samples) > 0 else 0.0
 
-            # Barge-in speech threshold:
-            # Silence/background room noise with open mic is RMS ~40 to 250.
-            # Human speech speaking into mic is typically RMS 1,200 to 10,000+.
-            # Requiring 2 consecutive frames (>40ms) with RMS > 650 prevents single click/breath false triggers.
-            if rms > 650.0:
+            # Barge-in speech threshold (only once bot has actually started speaking its greeting;
+            # opening the gate before the greeting starts allows downstream VADProcessor + LLMUserAggregator
+            # to emit VADUserStartedSpeakingFrame -> broadcast_interruption() and wipe the queued greeting!).
+            if self._bot_greeting_started and rms > 650.0:
                 self._consecutive_speech_frames += 1
                 if self._consecutive_speech_frames >= 2:
                     logger.info(
                         f"[GreetingAudioGate] User voice barge-in detected during initial greeting! "
                         f"(RMS={rms:.1f}, frames={self._consecutive_speech_frames}). "
-                        "Opening microphone gate."
+                        "Broadcasting interruption and opening microphone gate."
                     )
                     self._mic_gated = False
-                    # Only broadcast an interruption if the bot has actually started speaking its greeting;
-                    # broadcasting an interruption before the greeting starts would wipe the queued
-                    # initial LLMContextFrame from __process_queue!
-                    if self._bot_greeting_started:
-                        await self.broadcast_interruption()
+                    await self.broadcast_interruption()
                     # Flush onset frames from pre_buffer so first syllable is preserved
                     while self._pre_buffer:
                         buffered_frame = self._pre_buffer.popleft()
@@ -2148,7 +2143,7 @@ async def run_agent_live(
     avatar_custom_image: Optional[str] = None,
     custom_voice_audio: Optional[str] = None,
 ):
-    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "deep-clock-339817"
+    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "my-project-vanshika"
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
 
     canonical_persona_id = persona_identity.normalize_persona_id(persona_id)

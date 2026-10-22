@@ -182,17 +182,22 @@ class TestAstrotalkPanditji(unittest.IsolatedAsyncioTestCase):
         await proc.process_frame(InputAudioRawFrame(audio=quiet_pcm, sample_rate=16000, num_channels=1))
         self.assertEqual(len(pushed), 0)
 
-        # 4. Loud audio before BotStartedSpeakingFrame opens gate WITHOUT broadcasting interruption
+        # 4. Loud audio BEFORE BotStartedSpeakingFrame stays gated in pre_buffer so downstream VAD
+        # cannot fire broadcast_interruption() while the initial greeting is still connecting
         loud_pcm = (b"\x00\x10" * 320)  # value 4096 > 650 RMS
         await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
         await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
-        self.assertFalse(proc._mic_gated)
+        self.assertTrue(proc._mic_gated)
         proc.broadcast_interruption.assert_not_awaited()
-        self.assertGreaterEqual(len(pushed), 2)
+        self.assertEqual(len(pushed), 0)
 
-        # 5. BotStartedSpeakingFrame / BotStoppedSpeakingFrame lifecycle
+        # 5. Once BotStartedSpeakingFrame arrives, user voice barge-in opens gate and interrupts
         await proc.process_frame(BotStartedSpeakingFrame())
         self.assertTrue(proc._bot_greeting_started)
+        await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
+        await proc.process_frame(InputAudioRawFrame(audio=loud_pcm, sample_rate=16000, num_channels=1))
+        self.assertFalse(proc._mic_gated)
+        proc.broadcast_interruption.assert_awaited_once()
         await proc.process_frame(BotStoppedSpeakingFrame())
         self.assertFalse(proc._mic_gated)
 

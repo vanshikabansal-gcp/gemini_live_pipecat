@@ -1133,7 +1133,7 @@ async def run_agent(
     custom_voice_key: Optional[str] = None,
     persona_id: Optional[str] = None,
 ):
-    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "deep-clock-339817"
+    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "my-project-vanshika"
     location = os.getenv("GCP_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
 
     if persona_identity.normalize_persona_id(persona_id) == "astrotalk-panditji":
